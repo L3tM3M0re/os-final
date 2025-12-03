@@ -6,7 +6,7 @@
     <font size="4">谷建华</font>
 </div>
 <div align="center">
-    <font size="4">2024-11-21 v0.5</font>
+    <font size="4">2025-12-03 v0.6</font>
 </div>
 
 # 实验说明
