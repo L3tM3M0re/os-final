@@ -4,6 +4,7 @@
 #include <unios/schedule.h>
 #include <unios/interrupt.h>
 #include <unios/graphics.h>
+#include <unios/wm.h>
 #include <unios/tracing.h>
 #include <arch/x86.h>
 #include <sys/defs.h>
@@ -193,6 +194,9 @@ void mouse_handler(int irq) {
         }
 
         graphics_cursor_move(dx, dy);
+        int cur_x = 0, cur_y = 0;
+        graphics_cursor_get(&cur_x, &cur_y);
+        wm_on_mouse(cur_x, cur_y, tty->mouse.buttons);
     } while (0);
 
     mouse_in.count = 0;

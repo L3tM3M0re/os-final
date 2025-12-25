@@ -93,6 +93,26 @@ void graphics_cursor_move(int dx, int dy);
 void graphics_cursor_set(int x, int y);
 
 /*!
- * \brief 绘制光标
+ * \brief 获取鼠标光标位置
+ */
+void graphics_cursor_get(int *x, int *y);
+
+/*!
+ * \brief 绘制光标（若位置未变则无操作）
  */
 void graphics_cursor_render(void);
+
+/*!
+ * \brief 将 src 中的矩形 blit 到 dst 指定位置（仅支持 32bpp）
+ */
+bool graphics_blit(
+    const graphics_surface_t *src,
+    graphics_rect_t           src_rect,
+    graphics_surface_t       *dst,
+    int                       dst_x,
+    int                       dst_y);
+
+/*!
+ * \brief 获取初始化时绘制的背景副本（只读，可能为 NULL）
+ */
+const graphics_surface_t *graphics_background(void);

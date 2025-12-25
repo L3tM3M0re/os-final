@@ -8,6 +8,7 @@
 #include <unios/vfs.h>
 #include <unios/fs.h>
 #include <unios/graphics.h>
+#include <unios/wm.h>
 #include <unios/interrupt.h>
 #include <unios/tracing.h>
 #include <unios/assert.h>
@@ -27,6 +28,7 @@ void kernel_main() {
     kinfo("init memory done");
 
     graphics_boot_demo();
+    wm_init();
 
     process_t *proc = try_lock_free_pcb();
     assert(proc != NULL);

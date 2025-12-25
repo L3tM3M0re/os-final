@@ -41,6 +41,7 @@
 static graphics_mode_t g_mode;
 static graphics_surface_t g_front;
 static graphics_surface_t g_back;
+static graphics_surface_t g_bg;
 static bool            g_ready = false;
 
 static void blit_rect(
@@ -323,6 +324,14 @@ void graphics_cursor_move(int dx, int dy) {
 
     g_cursor.x = clamp_int(new_x, 0, max_x);
     g_cursor.y = clamp_int(new_y, 0, max_y);
+
+    cursor_redraw();
+}
+
+void graphics_cursor_get(int *x, int *y) {
+    if (!g_ready) { return; }
+    if (x != NULL) { *x = g_cursor.x; }
+    if (y != NULL) { *y = g_cursor.y; }
 }
 
 void graphics_cursor_render(void) {
@@ -410,6 +419,28 @@ bool graphics_present(const graphics_rect_t *rects, size_t count) {
     for (size_t i = 0; i < count; ++i) {
         blit_rect(&g_back, &g_front, rects[i]);
     }
+    return true;
+}
+
+const graphics_surface_t *graphics_background(void) {
+    return g_bg.pixels != NULL ? &g_bg : NULL;
+}
+
+bool graphics_blit(
+    const graphics_surface_t *src,
+    graphics_rect_t           src_rect,
+    graphics_surface_t       *dst,
+    int                       dst_x,
+    int                       dst_y) {
+    if (src == NULL || dst == NULL) { return false; }
+    if (src->bpp != dst->bpp || src->bpp != 32) { return false; }
+    graphics_rect_t rect = {
+        .x = (uint16_t)dst_x,
+        .y = (uint16_t)dst_y,
+        .w = src_rect.w,
+        .h = src_rect.h,
+    };
+    blit_rect(src, dst, rect);
     return true;
 }
 
@@ -512,6 +543,20 @@ bool graphics_boot_demo(void) {
     draw_demo_pattern(&g_back);
     graphics_present(NULL, 0);
     graphics_cursor_init();
+
+    //! make a copy of background for reuse
+    memset(&g_bg, 0, sizeof(g_bg));
+    g_bg.width  = g_back.width;
+    g_bg.height = g_back.height;
+    g_bg.bpp    = g_back.bpp;
+    g_bg.pitch  = g_back.pitch;
+    g_bg.size   = g_back.size;
+    g_bg.pixels = kmalloc(g_bg.size);
+    g_bg.owns   = true;
+    if (g_bg.pixels != NULL) {
+        graphics_rect_t full = {0, 0, g_bg.width, g_bg.height};
+        graphics_blit(&g_back, full, &g_bg, 0, 0);
+    }
 
     kinfo(
         "graphics: bochs-display LFB ready %ux%u@%u, fb=%#x -> %p (%zu KB)",
