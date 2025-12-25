@@ -111,3 +111,16 @@ void graphics_cursor_render(void);
  * \brief 获取当前光标的绝对坐标
  */
 void graphics_get_cursor_pos(int *x, int *y);
+
+/*!
+ * \brief 将光标绘制到指定 surface 上
+ */
+void graphics_cursor_draw_to(graphics_surface_t *dst, int x, int y);
+/*!
+ * \brief 存储当前光标位置
+ */
+void graphics_cursor_store_prev();
+/*!
+ * \brief 恢复移动前光标位置
+ */
+void graphics_cursor_restore_prev();

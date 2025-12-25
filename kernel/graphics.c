@@ -43,6 +43,8 @@ static graphics_surface_t g_front;
 static graphics_surface_t g_back;
 static bool            g_ready = false;
 
+static uint32_t g_cursor_bg_backup[64 * 64];
+
 typedef struct {
     bool ready;
     bool drawn;
@@ -359,8 +361,10 @@ static void cursor_build_bitmap() {
     g_cursor_sprite.owns   = false;
 }
 
-static void cursor_restore_prev() {
+void graphics_cursor_restore_prev() {
+    if (!g_ready) return;
     if (!g_cursor.drawn) { return; }
+
     graphics_rect_t rect = {
         (uint16_t)g_cursor.prev_x,
         (uint16_t)g_cursor.prev_y,
@@ -370,41 +374,21 @@ static void cursor_restore_prev() {
     graphics_blit(&g_front, rect.x, rect.y, &g_back, &rect);
 }
 
-static void cursor_draw_at(int x, int y) {
-    if (g_front.pixels == NULL) { return; }
-    graphics_rect_t rect = {
-        (uint16_t)x,
-        (uint16_t)y,
-        g_cursor_sprite.width,
-        g_cursor_sprite.height,
-    };
-    graphics_rect_t clamped = clamp_rect(&g_front, rect);
-    if (clamped.w == 0 || clamped.h == 0) { return; }
+void graphics_cursor_store_prev() {
+    if (!g_ready) return;
 
-    uint32_t *dst      = g_front.pixels;
-    uint32_t  dst_step = g_front.pitch / 4;
-    uint32_t *src      = g_cursor_sprite.pixels;
-    uint32_t  src_step = g_cursor_sprite.pitch / 4;
-
-    for (uint32_t yy = 0; yy < clamped.h; ++yy) {
-        uint32_t *srow = src + (clamped.y - rect.y + yy) * src_step
-                         + (clamped.x - rect.x);
-        uint32_t *drow = dst + (clamped.y + yy) * dst_step + clamped.x;
-        for (uint32_t xx = 0; xx < clamped.w; ++xx) {
-            uint32_t pix = srow[xx];
-            if ((pix >> 24) == 0) { continue; } // transparent
-            drow[xx] = pix;
-        }
-    }
-    g_cursor.drawn   = true;
-    g_cursor.prev_x  = clamped.x;
-    g_cursor.prev_y  = clamped.y;
+    g_cursor.drawn  = true;
+    g_cursor.prev_x = g_cursor.x;
+    g_cursor.prev_y = g_cursor.y;
 }
 
 static void cursor_redraw() {
-    if (!g_cursor.ready) { return; }
-    cursor_restore_prev();
-    cursor_draw_at(g_cursor.x, g_cursor.y);
+    if (!g_cursor.ready) return;
+
+    graphics_cursor_restore_prev();
+    graphics_cursor_draw_to(&g_front, g_cursor.x, g_cursor.y);
+
+    graphics_cursor_store_prev();
 }
 
 void graphics_map_lfb(uint32_t cr3) {
@@ -507,15 +491,69 @@ graphics_surface_t *graphics_backbuffer(void) {
     return g_ready ? &g_back : NULL;
 }
 
+static void _save_cursor_bg(int x, int y) {
+    if (!g_back.pixels) return;
+    int w = g_cursor_sprite.width;
+    int h = g_cursor_sprite.height;
+
+    int bx = x, by = y, bw = w, bh = h;
+    if (bx < 0) { bw += bx; bx = 0; }
+    if (by < 0) { bh += by; by = 0; }
+    if (bx + bw > g_back.width)  bw = g_back.width - bx;
+    if (by + bh > g_back.height) bh = g_back.height - by;
+    if (bw <= 0 || bh <= 0) return;
+
+    uint32_t *src = (uint32_t *)g_back.pixels;
+    int pitch = g_back.pitch / 4;
+    for (int i = 0; i < bh; ++i) {
+        memcpy(&g_cursor_bg_backup[i * w], &src[(by + i) * pitch + bx], bw * 4);
+    }
+}
+
+static void _restore_cursor_bg(int x, int y) {
+    if (!g_back.pixels) return;
+    int w = g_cursor_sprite.width;
+    int h = g_cursor_sprite.height;
+
+    int bx = x, by = y, bw = w, bh = h;
+    if (bx < 0) { bw += bx; bx = 0; }
+    if (by < 0) { bh += by; by = 0; }
+    if (bx + bw > g_back.width)  bw = g_back.width - bx;
+    if (by + bh > g_back.height) bh = g_back.height - by;
+    if (bw <= 0 || bh <= 0) return;
+
+    uint32_t *dst = (uint32_t *)g_back.pixels;
+    int pitch = g_back.pitch / 4;
+    for (int i = 0; i < bh; ++i) {
+        memcpy(&dst[(by + i) * pitch + bx], &g_cursor_bg_backup[i * w], bw * 4);
+    }
+}
+
 bool graphics_present(const graphics_rect_t *rects, size_t count) {
     if (g_front.pixels == NULL || g_back.pixels == NULL) { return false; }
+
+    bool cursor_active = g_cursor.ready;
+    int cx = g_cursor.x;
+    int cy = g_cursor.y;
+
+    if (cursor_active) {
+        _save_cursor_bg(cx, cy);
+        graphics_cursor_draw_to(&g_back, cx, cy);
+    }
+
     if (rects == NULL || count == 0) {
         graphics_blit(&g_front, 0, 0, &g_back, NULL);
-        return true;
+    } else {
+        for (size_t i = 0; i < count; ++i) {
+            graphics_blit(&g_front, rects[i].x, rects[i].y, &g_back, &rects[i]);
+        }
     }
-    for (size_t i = 0; i < count; ++i) {
-        graphics_blit(&g_front, rects[i].x, rects[i].y, &g_back, &rects[i]);
+
+    if (cursor_active) {
+        _restore_cursor_bg(cx, cy);
+        graphics_cursor_store_prev();
     }
+
     return true;
 }
 
@@ -629,4 +667,47 @@ bool graphics_boot_demo(void) {
         g_mode.lfb_size / NUM_1K);
 
     return true;
+}
+
+static void graphics_draw_surface_alpha(
+    graphics_surface_t *dst,
+    int dx, int dy,
+    const graphics_surface_t *src)
+{
+    if (!dst || !src || !dst->pixels || !src->pixels) return;
+
+    int src_x = 0, src_y = 0;
+    int w = src->width;
+    int h = src->height;
+
+    if (dx < 0) { src_x = -dx; w += dx; dx = 0; }
+    if (dy < 0) { src_y = -dy; h += dy; dy = 0; }
+
+    if (dx + w > dst->width)  w = dst->width - dx;
+    if (dy + h > dst->height) h = dst->height - dy;
+
+    if (w <= 0 || h <= 0) return;
+
+    uint32_t *src_pixels = (uint32_t *)src->pixels;
+    uint32_t *dst_pixels = (uint32_t *)dst->pixels;
+    int src_pitch = src->pitch / 4;
+    int dst_pitch = dst->pitch / 4;
+
+    for (int y = 0; y < h; ++y) {
+        uint32_t *s_row = src_pixels + (src_y + y) * src_pitch + src_x;
+        uint32_t *d_row = dst_pixels + (dy + y) * dst_pitch + dx;
+
+        for (int x = 0; x < w; ++x) {
+            uint32_t pixel = s_row[x];
+            if ((pixel >> 24) != 0) {
+                d_row[x] = pixel;
+            }
+        }
+    }
+}
+
+void graphics_cursor_draw_to(graphics_surface_t *dst, int x, int y) {
+    if (!g_ready || !g_cursor.ready) return;
+
+    graphics_draw_surface_alpha(dst, x, y, &g_cursor_sprite);
 }

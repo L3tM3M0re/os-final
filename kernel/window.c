@@ -119,9 +119,7 @@ void window_manager_refresh() {
     // 递归绘制窗口树
     // 如果 root_window 也有 surface，这行代码会把它画出来；如果没有 surface，它只负责遍历子节点
     draw_window_recursive(back_buffer, root_window, 0, 0);
-
     graphics_present(NULL, 0);
-    graphics_cursor_render();
 }
 
 window_t* window_from_point(int x, int y) {
