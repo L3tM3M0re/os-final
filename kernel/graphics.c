@@ -314,19 +314,23 @@ void graphics_cursor_set(int x, int y) {
 }
 
 void graphics_cursor_move(int dx, int dy) {
-    if (dx != 0 || dy != 0) {
-         kinfo("Move: %d, %d", dx, dy);
-    }
     if (!g_ready) { return; }
 
     int new_x = g_cursor.x + dx;
     int new_y = g_cursor.y + dy;
-
     int max_x = (int)g_front.width - 1;
     int max_y = (int)g_front.height - 1;
 
     g_cursor.x = clamp_int(new_x, 0, max_x);
     g_cursor.y = clamp_int(new_y, 0, max_y);
+}
+
+void graphics_cursor_render(void) {
+    if (!g_ready || !g_cursor.ready) { return; }
+
+    if (g_cursor.x == g_cursor.prev_x && g_cursor.y == g_cursor.prev_y) {
+        return;
+    }
 
     cursor_redraw();
 }

@@ -83,6 +83,7 @@ void graphics_cursor_init(void);
 
 /*!
  * \brief 相对移动鼠标光标，支持负值
+ * 不执行真正绘制工作
  */
 void graphics_cursor_move(int dx, int dy);
 
@@ -90,3 +91,8 @@ void graphics_cursor_move(int dx, int dy);
  * \brief 设置鼠标光标绝对位置
  */
 void graphics_cursor_set(int x, int y);
+
+/*!
+ * \brief 绘制光标
+ */
+void graphics_cursor_render(void);

@@ -41,22 +41,55 @@ static void set_leds() {
     outb(KB_DATA, KBC_MODE);
 }
 
+// 等待鼠标回复 ACK (0xFA)
+static void mouse_wait_ack() {
+    uint8_t ack;
+    // 设置一个简单的超时，防止硬件故障导致死循环
+    long timeout = 100000;
+    while (--timeout) {
+        if (inb(KB_CMD) & 0x01) { // 检查输出缓冲区是否有数据
+            ack = inb(KB_DATA);
+            if (ack == 0xFA) return; // 收到 ACK，成功返回
+            // 如果收到的不是 ACK，可能是之前的残留数据，继续等待
+        }
+    }
+}
+
+// 封装好的写鼠标命令函数：写入命令 -> 等待 ACK
+static void mouse_write(uint8_t byte) {
+    kb_wait();          // 等待输入缓冲区空 (CPU -> KBC)
+    outb(KB_CMD, 0xD4); // 发送“下一个字节是给鼠标的”命令
+    kb_wait();
+    outb(KB_DATA, byte);
+    mouse_wait_ack();   // 等待鼠标确认 (Device -> CPU)
+}
+
 static void set_mouse_leds() {
     kb_wait();
     outb(KB_CMD, KBCMD_EN_MOUSE_INTFACE);
-    kb_wait();
-    outb(KB_CMD, KEYCMD_SENDTO_MOUSE);
-    kb_wait();
-    outb(KB_DATA, MOUSECMD_ENABLE);
 
+    // 设置采样率为 240Hz
+    mouse_write(0xF3); // 命令: 设置采样率
+    mouse_write(240);
+
+    // 设置分辨率为 8 counts/mm (最大值)
+    mouse_write(0xE8); // 命令: 设置分辨率
+    mouse_write(0x03); // 数据: 3 (代表 8 counts/mm)
+
+    // 开启鼠标的数据包传输
+    mouse_write(MOUSECMD_ENABLE);
+
+    // 配置控制器
     kb_wait();
-    outb(KB_CMD, 0x20);
+    outb(KB_CMD, 0x20); // 读取 CCB
     kb_wait();
     uint8_t ccb = inb(KB_DATA);
-    ccb |= 0x02;
-    ccb &= ~0x20;
+
+    ccb |= 0x02;  // Bit 1: 开启鼠标中断 (IRQ 12)
+    ccb &= ~0x20; // Bit 5: 启用鼠标时钟 (0=Enable)
+
     kb_wait();
-    outb(KB_CMD, 0x60);
+    outb(KB_CMD, 0x60); // 写回 CCB
     kb_wait();
     outb(KB_DATA, ccb);
 }
@@ -93,13 +126,10 @@ void kb_handler(int irq) {
 };
 
 void mouse_handler(int irq) {
-
-    kinfo("Mouse IRQ received");
-
+    // kinfo("Mouse IRQ received");
     lock_or(&mouse_in.lock, sched);
     uint8_t scan_code = inb(0x60);
-
-    kinfo("[M:0x%x]", scan_code);
+    // kinfo("[M:0x%x]", scan_code);
     if (!mouse_init) {
         release(&mouse_in.lock);
         mouse_init = 1;
