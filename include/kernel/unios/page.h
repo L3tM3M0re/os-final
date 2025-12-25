@@ -9,6 +9,8 @@
 #define PG_MASK_P  0x1             //<! P
 #define PG_MASK_RW 0x2             //<! R/W
 #define PG_MASK_US 0x4             //<! U/S
+#define PG_MASK_PWT 0x8            //<! page write-through
+#define PG_MASK_PCD 0x10           //<! page cache disable
 #define PG_NP      0               //<! not present
 #define PG_P       PG_MASK_P       //<! present
 #define PG_RX      0               //<! read & executable

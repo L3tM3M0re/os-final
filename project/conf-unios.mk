@@ -73,6 +73,12 @@ KERNEL_NAME_IN_FAT := $(shell \
 	printf "\"%-*s%-*s\"" "8" "$${basename}" "3" "$${suffix}"                                       \
 )
 
+# graphics boot demo options
+CONFIG_GRAPHICS_BOOT_DEMO ?= 1
+CONFIG_GRAPHICS_WIDTH     ?= 1024
+CONFIG_GRAPHICS_HEIGHT    ?= 768
+CONFIG_GRAPHICS_BPP       ?= 32
+
 # configure toolchain
 DEFINES  ?=
 INCDIRS  ?=

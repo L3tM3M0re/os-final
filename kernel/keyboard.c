@@ -2,6 +2,8 @@
 #include <unios/interrupt.h>
 #include <unios/keymap.h>
 #include <unios/schedule.h>
+#include <unios/interrupt.h>
+#include <unios/graphics.h>
 #include <arch/x86.h>
 #include <sys/defs.h>
 #include <atomic.h>
@@ -102,7 +104,7 @@ void mouse_handler(int irq) {
     for (int i = 0; i < NR_CONSOLES; ++i) {
         tty_t* this = tty_table[i];
         if (this == NULL) { continue; }
-        if (!vcon_is_foreground(this->console)) {
+        if (vcon_is_foreground(this->console)) {
             tty = this;
             break;
         }
@@ -129,13 +131,19 @@ void mouse_handler(int irq) {
             tty->mouse.buttons &= ~MOUSE_MIDDLE_BUTTON;
         }
 
-        //! drag
+        //! relative delta
+        int8_t dx_raw = (int8_t)mouse_in.buf[1];
+        int8_t dy_raw = (int8_t)mouse_in.buf[2];
+        int    dx     = dx_raw;
+        int    dy     = -dy_raw; // ps/2 y 负号代表向下
+
+        //! drag offset for legacy tty usage
         if (tty->mouse.buttons & MOUSE_LEFT_BUTTON) {
-            uint8_t x_dir     = mouse_in.buf[0] & 0x10;
-            uint8_t y_dir     = mouse_in.buf[0] & 0x20;
-            tty->mouse.off_x += x_dir == 0x10 ? -1 : +1;
-            tty->mouse.off_y += y_dir == 0x20 ? -1 : +1;
+            tty->mouse.off_x += dx;
+            tty->mouse.off_y += dy;
         }
+
+        graphics_cursor_move(dx, dy);
     } while (0);
 
     mouse_in.count = 0;
@@ -165,6 +173,9 @@ void init_keyboard() {
     set_leds();
     put_irq_handler(KEYBOARD_IRQ, kb_handler);
     enable_irq(KEYBOARD_IRQ);
+
+    //! slave pic needs cascade unmasked for irq12 to deliver
+    enable_irq(CASCADE_IRQ);
 
     init_mouse();
     set_mouse_leds();

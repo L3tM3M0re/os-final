@@ -7,6 +7,8 @@
 #include <unios/schedule.h>
 #include <unios/vfs.h>
 #include <unios/fs.h>
+#include <unios/graphics.h>
+#include <unios/interrupt.h>
 #include <unios/tracing.h>
 #include <unios/assert.h>
 
@@ -41,11 +43,16 @@ void kernel_main() {
 
     init_sysclk();   //<! system clock
     init_keyboard(); //<! keyboard service
+    enable_irq(MOUSE_IRQ); //<! ensure mouse irq unmasked
+    //! force unmask irq12 in slave PIC in case earlier masks remain
+    outb(INT_S_CTLMASK, inb(INT_S_CTLMASK) & ~(1 << (MOUSE_IRQ - 8)));
     init_hd();       //<! hd rdwt service
     kinfo("init device done");
 
     vfs_setup_and_init();
     kinfo("init vfs done");
+
+    graphics_boot_demo();
 
     kstate_reenter_cntr = 0;
     kstate_on_init      = false;
