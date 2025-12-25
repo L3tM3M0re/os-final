@@ -43,7 +43,10 @@ static graphics_surface_t g_front;
 static graphics_surface_t g_back;
 static bool            g_ready = false;
 
+static volatile bool g_graphics_lock = false;
 static uint32_t g_cursor_bg_backup[64 * 64];
+
+static graphics_rect_t g_clip_rect = {0, 0, 0, 0};
 
 typedef struct {
     bool ready;
@@ -161,25 +164,6 @@ static inline int clamp_int(int val, int min_v, int max_v) {
     return val;
 }
 
-static graphics_rect_t clamp_rect(
-    const graphics_surface_t *surf, graphics_rect_t rect) {
-    if (rect.x >= surf->width || rect.y >= surf->height) {
-        graphics_rect_t empty = {0};
-        return empty;
-    }
-    uint32_t max_w =
-        rect.x + rect.w > surf->width ? surf->width - rect.x : rect.w;
-    uint32_t max_h =
-        rect.y + rect.h > surf->height ? surf->height - rect.y : rect.h;
-    graphics_rect_t r = {
-        .x = rect.x,
-        .y = rect.y,
-        .w = (uint16_t)max_w,
-        .h = (uint16_t)max_h,
-    };
-    return r;
-}
-
 // 辅助函数: 求两个矩形的交集
 static bool intersect_rect(graphics_rect_t *r1, const graphics_rect_t *r2) {
     int x1 = max(r1->x, r2->x);
@@ -197,74 +181,71 @@ static bool intersect_rect(graphics_rect_t *r1, const graphics_rect_t *r2) {
     return false;
 }
 
+void graphics_set_clip_rect(int x, int y, int w, int h) {
+    g_clip_rect.x = x;
+    g_clip_rect.y = y;
+    g_clip_rect.w = w;
+    g_clip_rect.h = h;
+}
+
+graphics_rect_t graphics_get_clip_rect() {
+    return g_clip_rect;
+}
+
 void graphics_blit(graphics_surface_t *dst, int dx, int dy,
                    const graphics_surface_t *src, const graphics_rect_t *src_area) {
     if (!dst || !src || !dst->pixels || !src->pixels) return;
 
-    // 确定源矩形
-    graphics_rect_t s_rect;
-    if (src_area) {
-        s_rect = *src_area;
-    } else {
-        s_rect.x = 0; s_rect.y = 0;
-        s_rect.w = src->width; s_rect.h = src->height;
+    int s_x = src_area ? src_area->x : 0;
+    int s_y = src_area ? src_area->y : 0;
+    int w   = src_area ? src_area->w : src->width;
+    int h   = src_area ? src_area->h : src->height;
+
+    int eff_x = dx;
+    int eff_y = dy;
+    int eff_w = w;
+    int eff_h = h;
+
+    if (eff_x < 0) {
+        eff_w += eff_x;
+        eff_x = 0;
+    }
+    if (eff_y < 0) {
+        eff_h += eff_y;
+        eff_y = 0;
     }
 
-    // 初始目标矩形
-    graphics_rect_t d_rect = {
-        .x = dx, .y = dy, .w = s_rect.w, .h = s_rect.h
-    };
+    graphics_rect_t d_rect = {eff_x, eff_y, eff_w, eff_h};
 
-    // 裁剪目标矩形
     graphics_rect_t dst_bounds = {0, 0, dst->width, dst->height};
-
-    int final_dst_x = dx;
-    int final_dst_y = dy;
-    int final_src_x = s_rect.x;
-    int final_src_y = s_rect.y;
-    int final_w     = s_rect.w;
-    int final_h     = s_rect.h;
-
-    // 左边界裁剪
-    if (final_dst_x < 0) {
-        final_w += final_dst_x;
-        final_src_x -= final_dst_x;
-        final_dst_x = 0;
-    }
-    // 上边界裁剪
-    if (final_dst_y < 0) {
-        final_h += final_dst_y;
-        final_src_y -= final_dst_y;
-        final_dst_y = 0;
-    }
-    // 右边界裁剪
-    if (final_dst_x + final_w > dst->width) {
-        final_w = dst->width - final_dst_x;
-    }
-    // 下边界裁剪
-    if (final_dst_y + final_h > dst->height) {
-        final_h = dst->height - final_dst_y;
+    if (!intersect_rect(&d_rect, &dst_bounds)) return;
+    if (dst == &g_back) {
+        if (!intersect_rect(&d_rect, &g_clip_rect)) return;
     }
 
-    // 源边界越界检查 (防止 src_area 指定了超出 src 范围的区域)
-    if (final_src_x + final_w > src->width) {
-        final_w = src->width - final_src_x;
-    }
-    if (final_src_y + final_h > src->height) {
-        final_h = src->height - final_src_y;
-    }
+    int delta_x = d_rect.x - dx;
+    int delta_y = d_rect.y - dy;
 
-    if (final_w <= 0 || final_h <= 0) return;
+    s_x += delta_x;
+    s_y += delta_y;
+
+    if (s_x < 0) s_x = 0;
+    if (s_y < 0) s_y = 0;
+
+    if (s_x + d_rect.w > src->width)  d_rect.w = src->width - s_x;
+    if (s_y + d_rect.h > src->height) d_rect.h = src->height - s_y;
+
+    if (d_rect.w <= 0 || d_rect.h <= 0) { return; }
 
     // 执行内存拷贝
     uint32_t bpp_stride = src->bpp / 8;
-    uint8_t *dst_base = (uint8_t *)dst->pixels + (final_dst_y * dst->pitch) + (final_dst_x * bpp_stride);
-    const uint8_t *src_base = (const uint8_t *)src->pixels + (final_src_y * src->pitch) + (final_src_x * bpp_stride);
+    uint8_t *dst_ptr = (uint8_t *)dst->pixels + (d_rect.y * dst->pitch) + (d_rect.x * bpp_stride);
+    const uint8_t *src_ptr = (const uint8_t *)src->pixels + (s_y * src->pitch) + (s_x * bpp_stride);
 
-    for (int i = 0; i < final_h; ++i) {
-        memcpy(dst_base, src_base, final_w * bpp_stride);
-        dst_base += dst->pitch;
-        src_base += src->pitch;
+    for (int i = 0; i < d_rect.h; ++i) {
+        memcpy(dst_ptr, src_ptr, d_rect.w * bpp_stride);
+        dst_ptr += dst->pitch;
+        src_ptr += src->pitch;
     }
 }
 
@@ -272,8 +253,12 @@ void graphics_fill_rect(
     graphics_surface_t *surf, graphics_rect_t rect, uint32_t argb) {
     if (surf == NULL || surf->pixels == NULL) { return; }
     if (surf->bpp != 32) { return; }
-    rect = clamp_rect(surf, rect);
-    if (rect.w == 0 || rect.h == 0) { return; }
+
+    graphics_rect_t surf_rect = {0, 0, surf->width, surf->height};
+    if (!intersect_rect(&rect, &surf_rect)) return;
+    if (surf == &g_back) {
+        if (!intersect_rect(&rect, &g_clip_rect)) return;
+    }
 
     uint32_t *base = surf->pixels;
     uint32_t  stride = surf->pitch / 4;
@@ -412,7 +397,6 @@ void graphics_cursor_set(int x, int y) {
     if (!g_ready) { return; }
     g_cursor.x = x;
     g_cursor.y = y;
-    cursor_redraw();
 }
 
 void graphics_cursor_move(int dx, int dy) {
@@ -425,12 +409,12 @@ void graphics_cursor_move(int dx, int dy) {
 
     g_cursor.x = clamp_int(new_x, 0, max_x);
     g_cursor.y = clamp_int(new_y, 0, max_y);
-
-    graphics_cursor_render();
 }
 
 void graphics_cursor_render(void) {
     if (!g_ready || !g_cursor.ready) { return; }
+
+    if (g_graphics_lock) { return; }
 
     if (g_cursor.x == g_cursor.prev_x && g_cursor.y == g_cursor.prev_y) {
         return;
@@ -551,7 +535,13 @@ bool graphics_present(const graphics_rect_t *rects, size_t count) {
 
     if (cursor_active) {
         _restore_cursor_bg(cx, cy);
-        graphics_cursor_store_prev();
+        g_cursor.drawn  = true;
+        g_cursor.prev_x = cx;
+        g_cursor.prev_y = cy;
+    }
+
+    if (g_cursor.x != cx || g_cursor.y != cy) {
+        graphics_cursor_render();
     }
 
     return true;
@@ -710,4 +700,12 @@ void graphics_cursor_draw_to(graphics_surface_t *dst, int x, int y) {
     if (!g_ready || !g_cursor.ready) return;
 
     graphics_draw_surface_alpha(dst, x, y, &g_cursor_sprite);
+}
+
+void graphics_lock(void) {
+    g_graphics_lock = true;
+}
+
+void graphics_unlock(void) {
+    g_graphics_lock = false;
 }

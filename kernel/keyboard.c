@@ -127,10 +127,12 @@ void kb_handler(int irq) {
 };
 
 void mouse_handler(int irq) {
-    // kinfo("Mouse IRQ received");
-    lock_or(&mouse_in.lock, sched);
+    if (compare_exchange_strong(&mouse_in.lock, 0, 1) != 0) {
+        return;
+    }
+
     uint8_t scan_code = inb(0x60);
-    // kinfo("[M:0x%x]", scan_code);
+
     if (!mouse_init) {
         release(&mouse_in.lock);
         mouse_init = 1;

@@ -1,9 +1,16 @@
 #include <unios/window.h>
+#include <unios/clock.h>
 #include <unios/memory.h>
 #include <unios/assert.h>
 #include <unios/tracing.h>
 #include <lib/string.h>
 #include <lib/container_of.h>
+#include <stdlib.h>
+#include <stddef.h>
+#include <arch/x86.h>
+
+#define DISABLE_INTERRUPTS() __asm__ volatile("cli")
+#define ENABLE_INTERRUPTS()  __asm__ volatile("sti")
 
 static window_t* root_window = NULL;
 static int win_id_counter = 0;
@@ -11,6 +18,153 @@ static int win_id_counter = 0;
 static window_t* drag_window = NULL; // 当前正在拖拽的窗口
 static int drag_off_x = 0;           // 鼠标点击位置相对于窗口左上角的偏移
 static int drag_off_y = 0;
+
+static const graphics_rect_t EMPTY_RECT = {0, 0, 0, 0};
+static graphics_rect_t g_dirty_rect = {0, 0, 0, 0};
+static volatile bool g_has_dirty = false;
+
+static volatile bool g_mouse_event_pending = false;
+static int g_cmd_x = 0;
+static int g_cmd_y = 0;
+static int g_cmd_buttons = 0;
+
+static int g_mouse_last_x = 0; // 记录上一帧的鼠标位置
+static int g_mouse_last_y = 0;
+
+static int min_int(int a, int b) { return a < b ? a : b; }
+static int max_int(int a, int b) { return a > b ? a : b; }
+
+// 简单矩形并
+static graphics_rect_t rect_union(graphics_rect_t a, graphics_rect_t b) {
+    if (a.w == 0 || a.h == 0) return b;
+    if (b.w == 0 || b.h == 0) return a;
+
+    int x1 = min_int(a.x, b.x);
+    int y1 = min_int(a.y, b.y);
+    int x2 = max_int(a.x + a.w, b.x + b.w);
+    int y2 = max_int(a.y + a.h, b.y + b.h);
+
+    return (graphics_rect_t){x1, y1, x2 - x1, y2 - y1};
+}
+
+static void reset_dirty_rect() {
+    g_dirty_rect = EMPTY_RECT;
+    g_has_dirty = false;
+}
+
+void window_mark_dirty() {
+    const graphics_mode_t *mode = graphics_current_mode();
+    if (mode) {
+        window_invalidate_rect(root_window, 0, 0, mode->width, mode->height);
+    }
+}
+
+void window_invalidate_rect(window_t* win, int x, int y, int w, int h) {
+    if (!win) { return; }
+
+    int abs_x = win->x + x;
+    int abs_y = win->y + y;
+    int fix_w = w;
+    int fix_h = h;
+
+    // 边界裁剪
+    const graphics_mode_t *mode = graphics_current_mode();
+    if (!mode) { return; }
+
+    if (abs_x < 0) {
+        fix_w += abs_x;
+        abs_x = 0;
+    }
+    if (abs_y < 0) {
+        fix_h += abs_y;
+        abs_y = 0;
+    }
+
+    if (abs_x + fix_w > mode->width)  fix_w = mode->width - abs_x;
+    if (abs_y + fix_h > mode->height) fix_h = mode->height - abs_y;
+
+    if (fix_w <= 0 || fix_h <= 0) return;
+
+    graphics_rect_t new_rect = {abs_x, abs_y, fix_w, fix_h};
+
+    // 合并到全局脏区域
+    if (!g_has_dirty) {
+        g_dirty_rect = new_rect;
+        g_has_dirty = true;
+    } else {
+        g_dirty_rect = rect_union(g_dirty_rect, new_rect);
+    }
+}
+
+void window_manager_handler(void) {
+    int last_refresh_tick = 0;
+    while (true) {
+        bool need_render_cursor = false;
+
+        if (g_mouse_event_pending) {
+            DISABLE_INTERRUPTS();
+            int x = g_cmd_x;
+            int y = g_cmd_y;
+            int buttons = g_cmd_buttons;
+            g_mouse_event_pending = false;
+            ENABLE_INTERRUPTS();
+            need_render_cursor = true;
+            bool left_btn = (buttons & 1);
+            if (left_btn) {
+                if (!drag_window) {
+                    window_t* target = window_from_point(x, y);
+                    if (target && target != root_window) {
+                        int local_x = x - target->x;
+                        int local_y = y - target->y;
+                        int btn_size = WIN_TITLE_HEIGHT - 6;
+                        int btn_x = target->w - btn_size - 4;
+                        int btn_y = 4;
+
+                        if (local_x >= btn_x && local_x < btn_x + btn_size &&
+                            local_y >= btn_y && local_y < btn_y + btn_size) {
+                            destroy_window(target);
+                        }
+
+                        else {
+                            drag_window = target;
+                            drag_off_x = x - target->x;
+                            drag_off_y = y - target->y;
+                            window_bring_to_front(target);
+                        }
+                    }
+                } else {
+                    int new_x = x - drag_off_x;
+                    int new_y = y - drag_off_y;
+                    if (drag_window->x != new_x || drag_window->y != new_y) {
+                        window_invalidate_rect(root_window, drag_window->x, drag_window->y, drag_window->w, drag_window->h);
+                        drag_window->x = new_x;
+                        drag_window->y = new_y;
+                        window_invalidate_rect(root_window, drag_window->x, drag_window->y, drag_window->w, drag_window->h);
+                    }
+                }
+            } else {
+                if (drag_window) drag_window = NULL;
+            }
+
+            g_mouse_last_x = x;
+            g_mouse_last_y = y;
+        }
+
+        if (g_has_dirty) {
+            int current_tick = system_ticks;
+            if (current_tick - last_refresh_tick >= 10) {
+                window_manager_refresh();
+                last_refresh_tick = current_tick;
+            }
+        }
+
+        if (need_render_cursor) {
+            graphics_cursor_render();
+        }
+
+        yield();
+    }
+}
 
 void init_window_manager() {
     const graphics_mode_t *mode = graphics_current_mode();
@@ -28,6 +182,9 @@ void init_window_manager() {
 
     INIT_LIST_HEAD(&root_window->children);
     INIT_LIST_HEAD(&root_window->sibling);
+
+    window_mark_dirty();
+
     kinfo("Window Manager initialized");
 }
 
@@ -67,7 +224,28 @@ window_t* create_window(int x, int y, int w, int h, const char* title, uint32_t 
     win->parent = root_window;
     list_add_tail(&win->sibling, &root_window->children);
 
+    window_invalidate_rect(root_window, win->x, win->y, win->w, win->h);
+
     return win;
+}
+
+void destroy_window(window_t* win) {
+    if (!win || win == root_window) { return; }
+
+    if (drag_window == win) {
+        drag_window = NULL;
+    }
+
+    window_invalidate_rect(root_window, win->x, win->y, win->w, win->h);
+
+    list_del(&win->sibling);
+
+    // 释放资源
+    if (win->surface.pixels && win->surface.owns) {
+        kfree(win->surface.pixels);
+        win->surface.pixels = NULL;
+    }
+    kfree(win);
 }
 
 void window_fill(window_t* win, uint32_t color) {
@@ -109,17 +287,28 @@ static void draw_window_recursive(graphics_surface_t* dest, window_t* win, int a
 }
 
 void window_manager_refresh() {
+    if (!g_has_dirty) return;
+
+    graphics_rect_t dirty = g_dirty_rect;
+    reset_dirty_rect();
+
     graphics_surface_t* back_buffer = graphics_backbuffer();
     if (!back_buffer || !root_window) return;
 
-    // 绘制纯色背景 (清屏)
-    graphics_rect_t screen_rect = {0, 0, back_buffer->width, back_buffer->height};
-    graphics_fill_rect(back_buffer, screen_rect, 0xFF336699);
+    graphics_lock();
 
-    // 递归绘制窗口树
-    // 如果 root_window 也有 surface，这行代码会把它画出来；如果没有 surface，它只负责遍历子节点
+    graphics_set_clip_rect(dirty.x, dirty.y, dirty.w, dirty.h);
+    graphics_fill_rect(back_buffer, dirty, 0xFF336699);
+
+
+    // 绘制窗口
     draw_window_recursive(back_buffer, root_window, 0, 0);
-    graphics_present(NULL, 0);
+
+    graphics_set_clip_rect(0, 0, back_buffer->width, back_buffer->height);
+
+    graphics_present(&dirty, 1);
+
+    graphics_unlock();
 }
 
 window_t* window_from_point(int x, int y) {
@@ -129,7 +318,7 @@ window_t* window_from_point(int x, int y) {
 
     list_for_each_entry_reverse(win, &root_window->children, sibling) {
 
-        // 1. 检查窗口是否可见
+        // 检查窗口是否可见
         if (!(win->flags & WIN_FLAG_VISIBLE)) continue;
 
         if (x >= win->x && x < win->x + win->w &&
@@ -144,13 +333,15 @@ window_t* window_from_point(int x, int y) {
 
 void window_bring_to_front(window_t* win) {
     if (!win || !win->parent) return;
+    struct list_head *head = &win->parent->children;
 
-    list_del(&win->sibling);
-    list_add_tail(&win->sibling, &win->parent->children);
+    if (list_is_last(&win->sibling, head)) {
+        return;
+    }
 
-    // TODO: 脏矩形刷新
-    // 目前没有实现脏矩形刷新，直接刷新整个窗口管理器
-    window_manager_refresh();
+    list_move_tail(&win->sibling, head);
+
+    window_invalidate_rect(root_window, win->x, win->y, win->w, win->h);
 }
 
 void window_draw_decoration(window_t* win) {
@@ -197,38 +388,8 @@ void window_draw_decoration(window_t* win) {
 }
 
 void window_manager_on_mouse(int x, int y, int buttons) {
-    bool left_btn = (buttons & 1);
-
-    if (left_btn) {
-        // 按下鼠标左键
-        if (!drag_window) {
-            // 尝试捕捉窗口
-            window_t* target = window_from_point(x, y);
-
-            if (target && target != root_window) {
-                drag_window = target;
-                drag_off_x = x - target->x;
-                drag_off_y = y - target->y;
-
-                // 置顶选中窗口
-                window_bring_to_front(target);
-                window_manager_refresh();
-            }
-        } else {
-            // 拖拽
-            int new_x = x - drag_off_x;
-            int new_y = y - drag_off_y;
-
-            if (drag_window->x != new_x || drag_window->y != new_y) {
-                drag_window->x = new_x;
-                drag_window->y = new_y;
-                window_manager_refresh();
-            }
-        }
-    } else {
-        // 松开左键
-        if (drag_window) {
-            drag_window = NULL;
-        }
-    }
+    g_cmd_x = x;
+    g_cmd_y = y;
+    g_cmd_buttons = buttons;
+    g_mouse_event_pending = true;
 }

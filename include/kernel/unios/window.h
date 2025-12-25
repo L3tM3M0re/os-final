@@ -39,14 +39,26 @@ typedef struct window_s {
 
     // 属性
     uint32_t flags;
-    uint32_t bg_color;      // 背景色，如果 surface 内容未完全覆盖时使用
+    uint32_t bg_color;      // 背景色, 如果 surface 内容未完全覆盖时使用
     char title[WIN_TITLE_MAX];
 
-    // 暂时预留，未来可以扩展为 onClick, onKey 等
+    // 暂时预留, 未来可以扩展为 onClick, onKey 等
     void *user_data;
 
 } window_t;
 
+/*!
+ * \brief 窗口管理器主循环任务
+ */
+void window_manager_handler(void);
+/*!
+ * \brief Test: 测试用, 标记屏幕为脏区域, 实现脏矩形后删除
+ */
+void window_mark_dirty();
+/*!
+ * \brief 标记窗口区域为脏区域
+ */
+void window_invalidate_rect(window_t* win, int x, int y, int w, int h);
 /*!
  * \brief 初始化窗口管理器
  */

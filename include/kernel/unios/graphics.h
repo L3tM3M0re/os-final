@@ -124,3 +124,9 @@ void graphics_cursor_store_prev();
  * \brief 恢复移动前光标位置
  */
 void graphics_cursor_restore_prev();
+
+void graphics_lock(void);
+void graphics_unlock(void);
+
+void graphics_set_clip_rect(int x, int y, int w, int h);
+graphics_rect_t graphics_get_clip_rect();

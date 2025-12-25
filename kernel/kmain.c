@@ -60,8 +60,6 @@ void kernel_main() {
     vfs_setup_and_init();
     kinfo("init vfs done");
 
-    window_manager_refresh();
-
     kstate_reenter_cntr = 0;
     kstate_on_init      = false;
     kinfo("init kernel done");

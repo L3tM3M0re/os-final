@@ -52,8 +52,8 @@
 #define P_STACKTOP   (SSREG + 4)
 
 #define NR_PCBS      64 //<! total pcbs
-#define NR_TASKS     2  //<! predefined task k-pcbs
-#define NR_K_PCBS    2  //<! reserved k-pcbs, only predefined tasks currently
+#define NR_TASKS     3  //<! predefined task k-pcbs
+#define NR_K_PCBS    3  //<! reserved k-pcbs, only predefined tasks currently
 #define NR_RECY_PROC 1  //<! no. of recycler proc `scanvenger`
 
 #define NR_FILES 64

@@ -12,6 +12,7 @@
 #include <unios/syscall.h>
 #include <unios/assert.h>
 #include <unios/page.h>
+#include <unios/window.h>
 #include <string.h>
 #include <atomic.h>
 
@@ -26,6 +27,7 @@ rwlock_t   proc_table_rwlock;
 task_t task_table[NR_TASKS] = {
     TASK_ENTRY(tty_handler),
     TASK_ENTRY(scavenger),
+    TASK_ENTRY(window_manager_handler),
 };
 
 process_t* try_lock_free_pcb() {
