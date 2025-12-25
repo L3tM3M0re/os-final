@@ -32,6 +32,16 @@ typedef struct graphics_surface_s {
 } graphics_surface_t;
 
 /*!
+ * \brief 通用 Blit 函数
+ * \param dst 目标 Surface
+ * \param dx 目标位置 X
+ * \param dy 目标位置 Y
+ * \param src 源 Surface
+ * \param src_area 源区域 (NULL 表示拷贝整个源 Surface)
+ */
+void graphics_blit(graphics_surface_t *dst, int dx, int dy,
+                   const graphics_surface_t *src, const graphics_rect_t *src_area);
+/*!
  * \brief 将 LFB (线性帧缓冲区) 映射到指定进程的页表中
  *
  * \param cr3 目标进程页目录的物理地址 (CR3 寄存器值)

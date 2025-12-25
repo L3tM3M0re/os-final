@@ -11,6 +11,7 @@
 #include <unios/interrupt.h>
 #include <unios/tracing.h>
 #include <unios/assert.h>
+#include <unios/window.h>
 
 extern void init();
 
@@ -27,6 +28,14 @@ void kernel_main() {
     kinfo("init memory done");
 
     graphics_boot_demo();
+
+    init_window_manager();
+
+    window_t* win1 = create_window(50, 50, 200, 150, "Win1", 0xFFFF0000); // 红
+    window_t* win2 = create_window(150, 100, 200, 150, "Win2", 0xFF00FF00); // 绿 (应该盖住红的一部分)
+    window_t* win3 = create_window(400, 300, 100, 100, "Win3", 0xFF0000FF); // 蓝
+
+    create_window(-50, -50, 150, 150, "Clipped", 0xFFFFFF00); // 黄色，只有右下角可见
 
     process_t *proc = try_lock_free_pcb();
     assert(proc != NULL);
@@ -50,6 +59,8 @@ void kernel_main() {
 
     vfs_setup_and_init();
     kinfo("init vfs done");
+
+    window_manager_refresh();
 
     kstate_reenter_cntr = 0;
     kstate_on_init      = false;
