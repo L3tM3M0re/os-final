@@ -32,6 +32,14 @@ typedef struct graphics_surface_s {
 } graphics_surface_t;
 
 /*!
+ * \brief 将 LFB (线性帧缓冲区) 映射到指定进程的页表中
+ *
+ * \param cr3 目标进程页目录的物理地址 (CR3 寄存器值)
+ *
+ * \note 此函数用于确保在不同进程上下文（如中断处理）中也能访问显存，防止 Page Fault
+ */
+void graphics_map_lfb(uint32_t cr3);
+/*!
  * \brief 初始化 bochs VBE LFB 并绘制简单测试图案
  *
  * \return true 表示初始化成功且已绘制测试图案

@@ -5,6 +5,7 @@
 #include <unios/assert.h>
 #include <unios/schedule.h>
 #include <unios/protect.h>
+#include <unios/graphics.h>
 #include <unios/tracing.h>
 #include <unios/interrupt.h>
 #include <arch/x86.h>
@@ -179,6 +180,8 @@ int do_fork() {
         release(&fa->pcb.lock);
         return -1;
     }
+
+    graphics_map_lfb(ch->pcb.cr3);
 
     fork_pcb_clone(ch);
     disable_int_begin();

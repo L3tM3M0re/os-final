@@ -158,6 +158,12 @@ static inline uint32_t clamp_u32(uint32_t val, uint32_t min_v, uint32_t max_v) {
     return val;
 }
 
+static inline int clamp_int(int val, int min_v, int max_v) {
+    if (val < min_v) { return min_v; }
+    if (val > max_v) { return max_v; }
+    return val;
+}
+
 static graphics_rect_t clamp_rect(
     const graphics_surface_t *surf, graphics_rect_t rect) {
     if (rect.x >= surf->width || rect.y >= surf->height) {
@@ -280,13 +286,24 @@ static void cursor_draw_at(int x, int y) {
 static void cursor_redraw() {
     if (!g_cursor.ready) { return; }
     cursor_restore_prev();
-
-    int max_x = (int)(g_front.width - g_cursor_sprite.width);
-    int max_y = (int)(g_front.height - g_cursor_sprite.height);
-    g_cursor.x = clamp_u32(g_cursor.x, 0, max_x >= 0 ? max_x : 0);
-    g_cursor.y = clamp_u32(g_cursor.y, 0, max_y >= 0 ? max_y : 0);
-
     cursor_draw_at(g_cursor.x, g_cursor.y);
+}
+
+void graphics_map_lfb(uint32_t cr3) {
+    if (!g_ready) { return; }
+
+    size_t   size_pages = round_up(g_mode.lfb_size, NUM_4K);
+    // 显存需要设置为不可缓存 (PWT | PCD) 以确保写入立即生效
+    uint32_t attr = PG_P | PG_S | PG_RWX | PG_MASK_PWT | PG_MASK_PCD;
+
+    uintptr_t lin_base = (uintptr_t)g_mode.lfb_lin;
+    uintptr_t phy_base = g_mode.lfb_phy;
+    size_t    mapped   = 0;
+
+    while (mapped < size_pages) {
+        pg_map_laddr(cr3, lin_base + mapped, phy_base + mapped, attr, attr);
+        mapped += NUM_4K;
+    }
 }
 
 void graphics_cursor_set(int x, int y) {
@@ -297,9 +314,20 @@ void graphics_cursor_set(int x, int y) {
 }
 
 void graphics_cursor_move(int dx, int dy) {
+    if (dx != 0 || dy != 0) {
+         kinfo("Move: %d, %d", dx, dy);
+    }
     if (!g_ready) { return; }
-    g_cursor.x += dx;
-    g_cursor.y += dy;
+
+    int new_x = g_cursor.x + dx;
+    int new_y = g_cursor.y + dy;
+
+    int max_x = (int)g_front.width - 1;
+    int max_y = (int)g_front.height - 1;
+
+    g_cursor.x = clamp_int(new_x, 0, max_x);
+    g_cursor.y = clamp_int(new_y, 0, max_y);
+
     cursor_redraw();
 }
 

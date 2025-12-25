@@ -14,4 +14,7 @@ QEMU_FLAGS ?=
 QEMU_FLAGS += -boot order=c
 QEMU_FLAGS += -serial file:$(OBJDIR)serial-$(shell date +%Y%m%d%H%M).log
 QEMU_FLAGS += -m $(QEMU_MEMORY)m
+
+QEMU_FLAGS += -vga std
+
 QEMU_FLAGS += $(if $(QEMU_DISPLAY),-display $(QEMU_DISPLAY),)

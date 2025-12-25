@@ -26,6 +26,8 @@ void kernel_main() {
     init_memory();
     kinfo("init memory done");
 
+    graphics_boot_demo();
+
     process_t *proc = try_lock_free_pcb();
     assert(proc != NULL);
     bool ok = init_locked_pcb(proc, "init", init, RPL_TASK);
@@ -41,18 +43,13 @@ void kernel_main() {
     }
     kinfo("init startup proc done");
 
-    init_sysclk();   //<! system clock
-    init_keyboard(); //<! keyboard service
-    enable_irq(MOUSE_IRQ); //<! ensure mouse irq unmasked
-    //! force unmask irq12 in slave PIC in case earlier masks remain
-    outb(INT_S_CTLMASK, inb(INT_S_CTLMASK) & ~(1 << (MOUSE_IRQ - 8)));
-    init_hd();       //<! hd rdwt service
+    init_sysclk();
+    init_keyboard();
+    init_hd();
     kinfo("init device done");
 
     vfs_setup_and_init();
     kinfo("init vfs done");
-
-    graphics_boot_demo();
 
     kstate_reenter_cntr = 0;
     kstate_on_init      = false;

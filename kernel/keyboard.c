@@ -4,6 +4,7 @@
 #include <unios/schedule.h>
 #include <unios/interrupt.h>
 #include <unios/graphics.h>
+#include <unios/tracing.h>
 #include <arch/x86.h>
 #include <sys/defs.h>
 #include <atomic.h>
@@ -47,10 +48,17 @@ static void set_mouse_leds() {
     outb(KB_CMD, KEYCMD_SENDTO_MOUSE);
     kb_wait();
     outb(KB_DATA, MOUSECMD_ENABLE);
+
     kb_wait();
-    outb(KB_CMD, KEYCMD_WRITE_MODE);
+    outb(KB_CMD, 0x20);
     kb_wait();
-    outb(KB_DATA, KBC_MODE);
+    uint8_t ccb = inb(KB_DATA);
+    ccb |= 0x02;
+    ccb &= ~0x20;
+    kb_wait();
+    outb(KB_CMD, 0x60);
+    kb_wait();
+    outb(KB_DATA, ccb);
 }
 
 /*!
@@ -85,12 +93,23 @@ void kb_handler(int irq) {
 };
 
 void mouse_handler(int irq) {
+
+    kinfo("Mouse IRQ received");
+
     lock_or(&mouse_in.lock, sched);
     uint8_t scan_code = inb(0x60);
+
+    kinfo("[M:0x%x]", scan_code);
     if (!mouse_init) {
         release(&mouse_in.lock);
         mouse_init = 1;
         return;
+    }
+
+    if (mouse_in.count == 0 && !(scan_code & 0x08)) {
+         // kwarn("Mouse misaligned! dropping byte: 0x%x", scan_code); // 可选调试
+         release(&mouse_in.lock);
+         return;
     }
 
     mouse_in.buf[mouse_in.count++] = scan_code;
@@ -153,6 +172,10 @@ void mouse_handler(int irq) {
 void init_mouse() {
     mouse_in.count = 0;
     mouse_in.lock  = 0;
+
+    while (inb(0x64) & 0x01) {
+        inb(0x60);
+    }
 
     put_irq_handler(MOUSE_IRQ, mouse_handler);
     enable_irq(MOUSE_IRQ);

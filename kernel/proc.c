@@ -5,6 +5,7 @@
 #include <unios/hd.h>
 #include <unios/scavenger.h>
 #include <unios/schedule.h>
+#include <unios/graphics.h>
 #include <unios/kstate.h>
 #include <unios/memory.h>
 #include <unios/layout.h>
@@ -185,6 +186,8 @@ bool init_locked_pcb(
     //! memory
     bool ok = pg_create_and_init(&pcb->cr3);
     if (!ok) { return false; }
+
+    graphics_map_lfb(pcb->cr3);
 
     phyaddr_t phy_base  = 0;
     phyaddr_t phy_limit = 0;
