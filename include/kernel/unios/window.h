@@ -7,6 +7,13 @@
 #include <stdbool.h>
 
 #define WIN_TITLE_MAX 64
+#define WIN_TITLE_HEIGHT 24
+
+#define C_BORDER_LIGHT  0xFFE0E0E0
+#define C_BORDER_DARK   0xFF404040
+#define C_TITLE_BG      0xFF000080
+#define C_TITLE_TEXT    0xFFFFFFFF
+#define C_CLOSE_BTN     0xFFFF0000
 
 // 窗口状态标志位
 #define WIN_FLAG_VISIBLE    (1 << 0)
@@ -61,7 +68,26 @@ void window_refresh(window_t* win);
  */
 void window_manager_refresh();
 /*!
- * \brief 绘制测试
+ * \brief 将指定窗口置于最前
+ */
+void window_bring_to_front(window_t* win);
+/*!
+ * \brief 返回指定坐标下的窗口指针
+ */
+window_t* window_from_point(int x, int y);
+/*!
+ * \brief 处理鼠标事件
+ * \param x 鼠标当前的 X 坐标 (绝对坐标)
+ * \param y 鼠标当前的 Y 坐标 (绝对坐标)
+ * \param buttons 鼠标按键状态 (Bit 0: 左键, Bit 1: 右键, Bit 2: 中键)
+ */
+void window_manager_on_mouse(int x, int y, int buttons);
+/*!
+ * \brief 绘制窗口装饰 (标题栏, 边框等)
+ */
+void window_draw_decoration(window_t* win);
+/*!
+ * \brief 绘制内容 (目前仅填充背景色)
  */
 void window_fill(window_t* win, uint32_t color);
 #endif

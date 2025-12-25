@@ -106,3 +106,8 @@ void graphics_cursor_set(int x, int y);
  * \brief 绘制光标
  */
 void graphics_cursor_render(void);
+
+/*!
+ * \brief 获取当前光标的绝对坐标
+ */
+void graphics_get_cursor_pos(int *x, int *y);

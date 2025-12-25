@@ -441,6 +441,8 @@ void graphics_cursor_move(int dx, int dy) {
 
     g_cursor.x = clamp_int(new_x, 0, max_x);
     g_cursor.y = clamp_int(new_y, 0, max_y);
+
+    graphics_cursor_render();
 }
 
 void graphics_cursor_render(void) {
@@ -463,6 +465,16 @@ void graphics_cursor_init(void) {
     g_cursor.y      = g_front.height / 2;
     g_cursor.prev_x = g_cursor.prev_y = 0;
     cursor_redraw();
+}
+
+void graphics_get_cursor_pos(int *x, int *y) {
+    if (g_ready) {
+        *x = g_cursor.x;
+        *y = g_cursor.y;
+    } else {
+        *x = 0;
+        *y = 0;
+    }
 }
 
 static void draw_demo_pattern(graphics_surface_t *surf) {

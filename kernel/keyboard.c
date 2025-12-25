@@ -5,6 +5,7 @@
 #include <unios/interrupt.h>
 #include <unios/graphics.h>
 #include <unios/tracing.h>
+#include <unios/window.h>
 #include <arch/x86.h>
 #include <sys/defs.h>
 #include <atomic.h>
@@ -160,25 +161,27 @@ void mouse_handler(int irq) {
     }
 
     do {
-        if (tty == NULL) { break; }
+        if (tty != NULL) {
+            if (mouse_in.buf[0] & 0b001) {
+                tty->mouse.buttons |= MOUSE_LEFT_BUTTON;
+            } else {
+                tty->mouse.buttons &= ~MOUSE_LEFT_BUTTON;
+            }
 
-        if (mouse_in.buf[0] & 0b001) {
-            tty->mouse.buttons |= MOUSE_LEFT_BUTTON;
-        } else {
-            tty->mouse.buttons &= ~MOUSE_LEFT_BUTTON;
+            if (mouse_in.buf[0] & 0b010) {
+                tty->mouse.buttons |= MOUSE_RIGHT_BUTTON;
+            } else {
+                tty->mouse.buttons &= ~MOUSE_RIGHT_BUTTON;
+            }
+
+            if (mouse_in.buf[0] & 0b100) {
+                tty->mouse.buttons |= MOUSE_MIDDLE_BUTTON;
+            } else {
+                tty->mouse.buttons &= ~MOUSE_MIDDLE_BUTTON;
+            }
         }
 
-        if (mouse_in.buf[0] & 0b010) {
-            tty->mouse.buttons |= MOUSE_RIGHT_BUTTON;
-        } else {
-            tty->mouse.buttons &= ~MOUSE_RIGHT_BUTTON;
-        }
-
-        if (mouse_in.buf[0] & 0b100) {
-            tty->mouse.buttons |= MOUSE_MIDDLE_BUTTON;
-        } else {
-            tty->mouse.buttons &= ~MOUSE_MIDDLE_BUTTON;
-        }
+        int buttons = mouse_in.buf[0] & 0x07;
 
         //! relative delta
         int8_t dx_raw = (int8_t)mouse_in.buf[1];
@@ -193,6 +196,10 @@ void mouse_handler(int irq) {
         }
 
         graphics_cursor_move(dx, dy);
+
+        int cur_x = 0, cur_y = 0;
+        graphics_get_cursor_pos(&cur_x, &cur_y);
+        window_manager_on_mouse(cur_x, cur_y, buttons);
     } while (0);
 
     mouse_in.count = 0;
