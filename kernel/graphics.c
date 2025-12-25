@@ -43,10 +43,10 @@ static graphics_surface_t g_front;
 static graphics_surface_t g_back;
 static bool            g_ready = false;
 
-static void blit_rect(
-    const graphics_surface_t *src,
-    graphics_surface_t       *dst,
-    graphics_rect_t           rect);
+static volatile bool g_graphics_lock = false;
+static uint32_t g_cursor_bg_backup[64 * 64];
+
+static graphics_rect_t g_clip_rect = {0, 0, 0, 0};
 
 typedef struct {
     bool ready;
@@ -164,31 +164,101 @@ static inline int clamp_int(int val, int min_v, int max_v) {
     return val;
 }
 
-static graphics_rect_t clamp_rect(
-    const graphics_surface_t *surf, graphics_rect_t rect) {
-    if (rect.x >= surf->width || rect.y >= surf->height) {
-        graphics_rect_t empty = {0};
-        return empty;
+// 辅助函数: 求两个矩形的交集
+static bool intersect_rect(graphics_rect_t *r1, const graphics_rect_t *r2) {
+    int x1 = max(r1->x, r2->x);
+    int y1 = max(r1->y, r2->y);
+    int x2 = min(r1->x + r1->w, r2->x + r2->w);
+    int y2 = min(r1->y + r1->h, r2->y + r2->h);
+
+    if (x2 > x1 && y2 > y1) {
+        r1->x = x1;
+        r1->y = y1;
+        r1->w = x2 - x1;
+        r1->h = y2 - y1;
+        return true;
     }
-    uint32_t max_w =
-        rect.x + rect.w > surf->width ? surf->width - rect.x : rect.w;
-    uint32_t max_h =
-        rect.y + rect.h > surf->height ? surf->height - rect.y : rect.h;
-    graphics_rect_t r = {
-        .x = rect.x,
-        .y = rect.y,
-        .w = (uint16_t)max_w,
-        .h = (uint16_t)max_h,
-    };
-    return r;
+    return false;
+}
+
+void graphics_set_clip_rect(int x, int y, int w, int h) {
+    g_clip_rect.x = x;
+    g_clip_rect.y = y;
+    g_clip_rect.w = w;
+    g_clip_rect.h = h;
+}
+
+graphics_rect_t graphics_get_clip_rect() {
+    return g_clip_rect;
+}
+
+void graphics_blit(graphics_surface_t *dst, int dx, int dy,
+                   const graphics_surface_t *src, const graphics_rect_t *src_area) {
+    if (!dst || !src || !dst->pixels || !src->pixels) return;
+
+    int s_x = src_area ? src_area->x : 0;
+    int s_y = src_area ? src_area->y : 0;
+    int w   = src_area ? src_area->w : src->width;
+    int h   = src_area ? src_area->h : src->height;
+
+    int eff_x = dx;
+    int eff_y = dy;
+    int eff_w = w;
+    int eff_h = h;
+
+    if (eff_x < 0) {
+        eff_w += eff_x;
+        eff_x = 0;
+    }
+    if (eff_y < 0) {
+        eff_h += eff_y;
+        eff_y = 0;
+    }
+
+    graphics_rect_t d_rect = {eff_x, eff_y, eff_w, eff_h};
+
+    graphics_rect_t dst_bounds = {0, 0, dst->width, dst->height};
+    if (!intersect_rect(&d_rect, &dst_bounds)) return;
+    if (dst == &g_back) {
+        if (!intersect_rect(&d_rect, &g_clip_rect)) return;
+    }
+
+    int delta_x = d_rect.x - dx;
+    int delta_y = d_rect.y - dy;
+
+    s_x += delta_x;
+    s_y += delta_y;
+
+    if (s_x < 0) s_x = 0;
+    if (s_y < 0) s_y = 0;
+
+    if (s_x + d_rect.w > src->width)  d_rect.w = src->width - s_x;
+    if (s_y + d_rect.h > src->height) d_rect.h = src->height - s_y;
+
+    if (d_rect.w <= 0 || d_rect.h <= 0) { return; }
+
+    // 执行内存拷贝
+    uint32_t bpp_stride = src->bpp / 8;
+    uint8_t *dst_ptr = (uint8_t *)dst->pixels + (d_rect.y * dst->pitch) + (d_rect.x * bpp_stride);
+    const uint8_t *src_ptr = (const uint8_t *)src->pixels + (s_y * src->pitch) + (s_x * bpp_stride);
+
+    for (int i = 0; i < d_rect.h; ++i) {
+        memcpy(dst_ptr, src_ptr, d_rect.w * bpp_stride);
+        dst_ptr += dst->pitch;
+        src_ptr += src->pitch;
+    }
 }
 
 void graphics_fill_rect(
     graphics_surface_t *surf, graphics_rect_t rect, uint32_t argb) {
     if (surf == NULL || surf->pixels == NULL) { return; }
     if (surf->bpp != 32) { return; }
-    rect = clamp_rect(surf, rect);
-    if (rect.w == 0 || rect.h == 0) { return; }
+
+    graphics_rect_t surf_rect = {0, 0, surf->width, surf->height};
+    if (!intersect_rect(&rect, &surf_rect)) return;
+    if (surf == &g_back) {
+        if (!intersect_rect(&rect, &g_clip_rect)) return;
+    }
 
     uint32_t *base = surf->pixels;
     uint32_t  stride = surf->pitch / 4;
@@ -276,52 +346,34 @@ static void cursor_build_bitmap() {
     g_cursor_sprite.owns   = false;
 }
 
-static void cursor_restore_prev() {
+void graphics_cursor_restore_prev() {
+    if (!g_ready) return;
     if (!g_cursor.drawn) { return; }
+
     graphics_rect_t rect = {
         (uint16_t)g_cursor.prev_x,
         (uint16_t)g_cursor.prev_y,
         g_cursor_sprite.width,
         g_cursor_sprite.height,
     };
-    blit_rect(&g_back, &g_front, rect);
+    graphics_blit(&g_front, rect.x, rect.y, &g_back, &rect);
 }
 
-static void cursor_draw_at(int x, int y) {
-    if (g_front.pixels == NULL) { return; }
-    graphics_rect_t rect = {
-        (uint16_t)x,
-        (uint16_t)y,
-        g_cursor_sprite.width,
-        g_cursor_sprite.height,
-    };
-    graphics_rect_t clamped = clamp_rect(&g_front, rect);
-    if (clamped.w == 0 || clamped.h == 0) { return; }
+void graphics_cursor_store_prev() {
+    if (!g_ready) return;
 
-    uint32_t *dst      = g_front.pixels;
-    uint32_t  dst_step = g_front.pitch / 4;
-    uint32_t *src      = g_cursor_sprite.pixels;
-    uint32_t  src_step = g_cursor_sprite.pitch / 4;
-
-    for (uint32_t yy = 0; yy < clamped.h; ++yy) {
-        uint32_t *srow = src + (clamped.y - rect.y + yy) * src_step
-                         + (clamped.x - rect.x);
-        uint32_t *drow = dst + (clamped.y + yy) * dst_step + clamped.x;
-        for (uint32_t xx = 0; xx < clamped.w; ++xx) {
-            uint32_t pix = srow[xx];
-            if ((pix >> 24) == 0) { continue; } // transparent
-            drow[xx] = pix;
-        }
-    }
-    g_cursor.drawn   = true;
-    g_cursor.prev_x  = clamped.x;
-    g_cursor.prev_y  = clamped.y;
+    g_cursor.drawn  = true;
+    g_cursor.prev_x = g_cursor.x;
+    g_cursor.prev_y = g_cursor.y;
 }
 
 static void cursor_redraw() {
-    if (!g_cursor.ready) { return; }
-    cursor_restore_prev();
-    cursor_draw_at(g_cursor.x, g_cursor.y);
+    if (!g_cursor.ready) return;
+
+    graphics_cursor_restore_prev();
+    graphics_cursor_draw_to(&g_front, g_cursor.x, g_cursor.y);
+
+    graphics_cursor_store_prev();
 }
 
 void graphics_map_lfb(uint32_t cr3) {
@@ -345,7 +397,6 @@ void graphics_cursor_set(int x, int y) {
     if (!g_ready) { return; }
     g_cursor.x = x;
     g_cursor.y = y;
-    cursor_redraw();
 }
 
 void graphics_cursor_move(int dx, int dy) {
@@ -362,6 +413,8 @@ void graphics_cursor_move(int dx, int dy) {
 
 void graphics_cursor_render(void) {
     if (!g_ready || !g_cursor.ready) { return; }
+
+    if (g_graphics_lock) { return; }
 
     if (g_cursor.x == g_cursor.prev_x && g_cursor.y == g_cursor.prev_y) {
         return;
@@ -380,6 +433,16 @@ void graphics_cursor_init(void) {
     g_cursor.y      = g_front.height / 2;
     g_cursor.prev_x = g_cursor.prev_y = 0;
     cursor_redraw();
+}
+
+void graphics_get_cursor_pos(int *x, int *y) {
+    if (g_ready) {
+        *x = g_cursor.x;
+        *y = g_cursor.y;
+    } else {
+        *x = 0;
+        *y = 0;
+    }
 }
 
 static void draw_demo_pattern(graphics_surface_t *surf) {
@@ -412,39 +475,75 @@ graphics_surface_t *graphics_backbuffer(void) {
     return g_ready ? &g_back : NULL;
 }
 
-static void blit_rect(
-    const graphics_surface_t *src,
-    graphics_surface_t       *dst,
-    graphics_rect_t           rect) {
-    if (src == NULL || dst == NULL) { return; }
-    if (src->bpp != dst->bpp || src->bpp != 32) { return; }
+static void _save_cursor_bg(int x, int y) {
+    if (!g_back.pixels) return;
+    int w = g_cursor_sprite.width;
+    int h = g_cursor_sprite.height;
 
-    rect      = clamp_rect(dst, rect);
-    graphics_rect_t src_rect = clamp_rect(src, rect);
-    if (rect.w == 0 || rect.h == 0) { return; }
+    int bx = x, by = y, bw = w, bh = h;
+    if (bx < 0) { bw += bx; bx = 0; }
+    if (by < 0) { bh += by; by = 0; }
+    if (bx + bw > g_back.width)  bw = g_back.width - bx;
+    if (by + bh > g_back.height) bh = g_back.height - by;
+    if (bw <= 0 || bh <= 0) return;
 
-    uint32_t bytes_per_pixel = src->bpp / 8;
-    for (uint32_t y = 0; y < rect.h; ++y) {
-        uint8_t *s = (uint8_t *)src->pixels
-                     + (src_rect.y + y) * src->pitch
-                     + src_rect.x * bytes_per_pixel;
-        uint8_t *d = (uint8_t *)dst->pixels
-                     + (rect.y + y) * dst->pitch
-                     + rect.x * bytes_per_pixel;
-        memcpy(d, s, rect.w * bytes_per_pixel);
+    uint32_t *src = (uint32_t *)g_back.pixels;
+    int pitch = g_back.pitch / 4;
+    for (int i = 0; i < bh; ++i) {
+        memcpy(&g_cursor_bg_backup[i * w], &src[(by + i) * pitch + bx], bw * 4);
+    }
+}
+
+static void _restore_cursor_bg(int x, int y) {
+    if (!g_back.pixels) return;
+    int w = g_cursor_sprite.width;
+    int h = g_cursor_sprite.height;
+
+    int bx = x, by = y, bw = w, bh = h;
+    if (bx < 0) { bw += bx; bx = 0; }
+    if (by < 0) { bh += by; by = 0; }
+    if (bx + bw > g_back.width)  bw = g_back.width - bx;
+    if (by + bh > g_back.height) bh = g_back.height - by;
+    if (bw <= 0 || bh <= 0) return;
+
+    uint32_t *dst = (uint32_t *)g_back.pixels;
+    int pitch = g_back.pitch / 4;
+    for (int i = 0; i < bh; ++i) {
+        memcpy(&dst[(by + i) * pitch + bx], &g_cursor_bg_backup[i * w], bw * 4);
     }
 }
 
 bool graphics_present(const graphics_rect_t *rects, size_t count) {
     if (g_front.pixels == NULL || g_back.pixels == NULL) { return false; }
+
+    bool cursor_active = g_cursor.ready;
+    int cx = g_cursor.x;
+    int cy = g_cursor.y;
+
+    if (cursor_active) {
+        _save_cursor_bg(cx, cy);
+        graphics_cursor_draw_to(&g_back, cx, cy);
+    }
+
     if (rects == NULL || count == 0) {
-        graphics_rect_t full = {0, 0, g_back.width, g_back.height};
-        blit_rect(&g_back, &g_front, full);
-        return true;
+        graphics_blit(&g_front, 0, 0, &g_back, NULL);
+    } else {
+        for (size_t i = 0; i < count; ++i) {
+            graphics_blit(&g_front, rects[i].x, rects[i].y, &g_back, &rects[i]);
+        }
     }
-    for (size_t i = 0; i < count; ++i) {
-        blit_rect(&g_back, &g_front, rects[i]);
+
+    if (cursor_active) {
+        _restore_cursor_bg(cx, cy);
+        g_cursor.drawn  = true;
+        g_cursor.prev_x = cx;
+        g_cursor.prev_y = cy;
     }
+
+    if (g_cursor.x != cx || g_cursor.y != cy) {
+        graphics_cursor_render();
+    }
+
     return true;
 }
 
@@ -558,4 +657,55 @@ bool graphics_boot_demo(void) {
         g_mode.lfb_size / NUM_1K);
 
     return true;
+}
+
+static void graphics_draw_surface_alpha(
+    graphics_surface_t *dst,
+    int dx, int dy,
+    const graphics_surface_t *src)
+{
+    if (!dst || !src || !dst->pixels || !src->pixels) return;
+
+    int src_x = 0, src_y = 0;
+    int w = src->width;
+    int h = src->height;
+
+    if (dx < 0) { src_x = -dx; w += dx; dx = 0; }
+    if (dy < 0) { src_y = -dy; h += dy; dy = 0; }
+
+    if (dx + w > dst->width)  w = dst->width - dx;
+    if (dy + h > dst->height) h = dst->height - dy;
+
+    if (w <= 0 || h <= 0) return;
+
+    uint32_t *src_pixels = (uint32_t *)src->pixels;
+    uint32_t *dst_pixels = (uint32_t *)dst->pixels;
+    int src_pitch = src->pitch / 4;
+    int dst_pitch = dst->pitch / 4;
+
+    for (int y = 0; y < h; ++y) {
+        uint32_t *s_row = src_pixels + (src_y + y) * src_pitch + src_x;
+        uint32_t *d_row = dst_pixels + (dy + y) * dst_pitch + dx;
+
+        for (int x = 0; x < w; ++x) {
+            uint32_t pixel = s_row[x];
+            if ((pixel >> 24) != 0) {
+                d_row[x] = pixel;
+            }
+        }
+    }
+}
+
+void graphics_cursor_draw_to(graphics_surface_t *dst, int x, int y) {
+    if (!g_ready || !g_cursor.ready) return;
+
+    graphics_draw_surface_alpha(dst, x, y, &g_cursor_sprite);
+}
+
+void graphics_lock(void) {
+    g_graphics_lock = true;
+}
+
+void graphics_unlock(void) {
+    g_graphics_lock = false;
 }

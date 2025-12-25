@@ -1,4 +1,3 @@
-
 # Git Rebase 极简协作手册 (C++版)
 
 本手册专为 Git 新手设计，采用 **Rebase 工作流**，确保我们的提交历史像一条直线一样干净。
@@ -94,7 +93,7 @@ git rebase main
 4.  **回到终端**，告诉 Git 你修好了：
     ```bash
     git add .
-    
+
     # ⚠️ 注意：这里不要运行 git commit，而是运行：
     git rebase --continue
     ```

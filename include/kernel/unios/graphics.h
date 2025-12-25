@@ -32,6 +32,16 @@ typedef struct graphics_surface_s {
 } graphics_surface_t;
 
 /*!
+ * \brief 通用 Blit 函数
+ * \param dst 目标 Surface
+ * \param dx 目标位置 X
+ * \param dy 目标位置 Y
+ * \param src 源 Surface
+ * \param src_area 源区域 (NULL 表示拷贝整个源 Surface)
+ */
+void graphics_blit(graphics_surface_t *dst, int dx, int dy,
+                   const graphics_surface_t *src, const graphics_rect_t *src_area);
+/*!
  * \brief 将 LFB (线性帧缓冲区) 映射到指定进程的页表中
  *
  * \param cr3 目标进程页目录的物理地址 (CR3 寄存器值)
@@ -96,3 +106,27 @@ void graphics_cursor_set(int x, int y);
  * \brief 绘制光标
  */
 void graphics_cursor_render(void);
+
+/*!
+ * \brief 获取当前光标的绝对坐标
+ */
+void graphics_get_cursor_pos(int *x, int *y);
+
+/*!
+ * \brief 将光标绘制到指定 surface 上
+ */
+void graphics_cursor_draw_to(graphics_surface_t *dst, int x, int y);
+/*!
+ * \brief 存储当前光标位置
+ */
+void graphics_cursor_store_prev();
+/*!
+ * \brief 恢复移动前光标位置
+ */
+void graphics_cursor_restore_prev();
+
+void graphics_lock(void);
+void graphics_unlock(void);
+
+void graphics_set_clip_rect(int x, int y, int w, int h);
+graphics_rect_t graphics_get_clip_rect();
