@@ -130,3 +130,7 @@ void graphics_unlock(void);
 
 void graphics_set_clip_rect(int x, int y, int w, int h);
 graphics_rect_t graphics_get_clip_rect();
+
+void graphics_draw_text(graphics_surface_t *dst, int x, int y, const char *text, uint32_t color);
+void graphics_draw_hollow_rect(graphics_surface_t *dst, int x, int y, int w, int h, uint32_t color);
+void graphics_draw_glyph(graphics_surface_t *dst, int x, int y, const uint8_t *bitmap, uint32_t color);

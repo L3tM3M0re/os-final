@@ -417,6 +417,7 @@ void window_draw_decoration(window_t* win) {
     };
     graphics_fill_rect(&win->surface, close_rect, C_CLOSE_BTN);
 
+<<<<<<< HEAD
     graphics_rect_t max_rect = {
         w - btn_size * 2 - 8,
         btn_y,
@@ -434,6 +435,14 @@ void window_draw_decoration(window_t* win) {
     graphics_fill_rect(&win->surface, min_rect, C_MIN_BTN);
 
     // TODO: 绘制标题文本, 需要实现文字渲染功能
+=======
+    int text_x = 6;
+    int text_y = (WIN_TITLE_HEIGHT - 16) / 2 + 1;
+
+    if (win->title[0] != '\0') {
+        graphics_draw_text(&win->surface, text_x, text_y, win->title, 0xFFFFFFFF);
+    }
+>>>>>>> edeb14bdd85e59e63c1bbdf0fa8087b794c57037
 }
 
 void window_manager_on_mouse(int x, int y, int buttons) {
