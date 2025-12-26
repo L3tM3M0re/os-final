@@ -34,15 +34,11 @@ typedef struct window_s {
     int w;
     int h;
 
-    int saved_normal_x;
-    int saved_normal_y;
-    int saved_normal_w;
-    int saved_normal_h;
-
     int restore_x;
     int restore_y;
     int restore_w;
     int restore_h;
+    int restore_to_maximized;
 
     // 窗口内容缓冲
     graphics_surface_t surface;
@@ -57,11 +53,10 @@ typedef struct window_s {
     uint32_t bg_color;      // 背景色, 如果 surface 内容未完全覆盖时使用
     char title[WIN_TITLE_MAX];
 
-    bool has_saved_normal;
+    bool has_restore_pos;
     bool has_restore_bounds;
     bool is_maximized;
     bool is_minimized;
-    bool restore_to_maximized;
 
     // 暂时预留, 未来可以扩展为 onClick, onKey 等
     void *user_data;

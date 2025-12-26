@@ -40,8 +40,12 @@ static int g_mouse_last_y = 0;
 
 static bool window_recreate_surface(window_t* win, int new_w, int new_h);
 static bool window_set_bounds(window_t* win, int x, int y, int w, int h);
-static void window_save_normal_bounds(window_t* win, int x, int y, int w, int h);
-static void window_restore_from_minimized(window_t* win);
+
+static void window_store_pos(window_t* win, int x, int y);
+static void window_store_bounds(window_t* win, int x, int y, int w, int h);
+static void window_store(window_t* win);
+static void window_restore_bounds(window_t* win);
+static void window_restore(window_t* win);
 
 static int min_int(int a, int b) { return a < b ? a : b; }
 static int max_int(int a, int b) { return a > b ? a : b; }
@@ -206,10 +210,7 @@ void window_manager_handler(void) {
                 }
             } else {
                 if (drag_window) {
-                    if (!drag_window->is_maximized && !drag_window->is_minimized) {
-                        window_save_normal_bounds(
-                            drag_window, drag_window->x, drag_window->y, drag_window->w, drag_window->h);
-                    }
+                    window_store_pos(drag_window, drag_window->x, drag_window->y);
                     drag_window = NULL;
                 }
                 g_handled = false;
@@ -270,11 +271,9 @@ window_t* create_window(int x, int y, int w, int h, const char* title, uint32_t 
     if (win->h < WIN_MIN_HEIGHT) { win->h = WIN_MIN_HEIGHT; }
     win->flags = WIN_FLAG_VISIBLE;
     win->bg_color = bg_color;
-    win->has_saved_normal = false;
     win->has_restore_bounds = false;
     win->is_maximized = false;
     win->is_minimized = false;
-    win->restore_to_maximized = false;
     if (title) strncpy(win->title, title, WIN_TITLE_MAX - 1);
 
     INIT_LIST_HEAD(&win->children);
@@ -296,8 +295,6 @@ window_t* create_window(int x, int y, int w, int h, const char* title, uint32_t 
     // 将新窗口加入到 root 的子窗口链表尾部
     win->parent = root_window;
     list_add_tail(&win->sibling, &root_window->children);
-
-    window_save_normal_bounds(win, win->x, win->y, win->w, win->h);
 
     window_invalidate_rect(root_window, win->x, win->y, win->w, win->h);
 
@@ -619,58 +616,91 @@ static bool window_set_bounds(window_t* win, int x, int y, int w, int h) {
     return true;
 }
 
-static void window_save_normal_bounds(window_t* win, int x, int y, int w, int h) {
+static void window_store_pos(window_t* win, int x, int y) {
     if (!win) { return; }
-    win->saved_normal_x = x;
-    win->saved_normal_y = y;
-    win->saved_normal_w = w;
-    win->saved_normal_h = h;
-    win->has_saved_normal = true;
+    win->restore_x = x;
+    win->restore_y = y;
+    win->has_restore_pos = true;
 }
 
-static void window_restore_from_minimized(window_t* win) {
-    if (!win || !win->is_minimized || !win->has_restore_bounds) { return; }
 
-    bool restore_max = win->restore_to_maximized;
-    win->is_minimized = false;
+static void window_store_bounds(window_t* win, int x, int y, int w, int h) {
+    if (!win) { return; }
+    win->restore_x = x;
+    win->restore_y = y;
+    win->restore_w = w;
+    win->restore_h = h;
+    win->has_restore_pos = true;
+    win->has_restore_bounds = true;
+}
+
+static void window_store(window_t* win) {
+    if (!win) { return; }
+    if (win->is_minimized) { return; }
+    kinfo("Storing window bounds: %d,%d %dx%d, restore_to_maximized: %d", win->x, win->y, win->w, win->h, win->is_maximized);
+    if (win->is_maximized) {
+        win->restore_to_maximized = true;
+        return;
+    }
+    window_store_bounds(win, win->x, win->y, win->w, win->h);
+}
+
+static void window_restore_bounds(window_t* win) {
+    if (!win || !win->has_restore_bounds) { return; }
     window_set_bounds(win, win->restore_x, win->restore_y, win->restore_w, win->restore_h);
-    win->is_maximized = restore_max;
-    win->has_restore_bounds = false;
     win->restore_to_maximized = false;
+    win->has_restore_pos = false;
+    win->has_restore_bounds = false;
+}
+
+static void window_restore(window_t* win) {
+    if (!win)
+    kinfo("Restoring window bounds: %d,%d %dx%d, restore_to_maximized: %d", win->restore_x, win->restore_y, win->restore_w, win->restore_h, win->restore_to_maximized);
+    if (win->restore_to_maximized) {
+        if (win->is_maximized) {
+
+        } else {
+            window_toggle_maximize(win);
+        }
+        win->restore_to_maximized = false;
+        return;
+    }
+    if (win->has_restore_bounds) {
+        window_restore_bounds(win);
+    } else if (win->has_restore_pos) {
+        window_set_bounds(win, win->restore_x, win->restore_y, win->w, win->h);
+        win->has_restore_pos = false;
+    }
 }
 
 void window_toggle_maximize(window_t* win) {
     const graphics_mode_t *mode = graphics_current_mode();
     if (!win || !mode || win == root_window) { return; }
 
-    if (win->is_minimized) {
-        bool was_max = win->restore_to_maximized;
-        window_restore_from_minimized(win);
-        if (was_max) {
-            return;
-        }
-    }
-
     if (win->is_maximized) {
-        if (win->has_saved_normal) {
-            window_set_bounds(
-                win,
-                win->saved_normal_x,
-                win->saved_normal_y,
-                win->saved_normal_w,
-                win->saved_normal_h);
-        }
+        window_restore_bounds(win);
         win->is_maximized = false;
         return;
     }
 
-    window_save_normal_bounds(win, win->x, win->y, win->w, win->h);
-    if (window_set_bounds(win, 0, 0, mode->width, mode->height)) {
-        win->is_maximized = true;
+    if (win->is_minimized) {
+        if (win->restore_to_maximized) {
+            window_set_bounds(win, 0, 0, mode->width, mode->height);
+            win->is_maximized = true;
+            win->is_minimized = false;
+            return;
+        }
+        window_restore(win);
         win->is_minimized = false;
-        win->has_restore_bounds = false;
-        win->restore_to_maximized = false;
+        if (win->is_maximized) {
+            return;
+        }
     }
+
+    window_store(win);
+    win->is_maximized = true;
+    win->is_minimized = false;
+    window_set_bounds(win, 0, 0, mode->width, mode->height);
 }
 
 void window_toggle_minimize(window_t* win) {
@@ -678,27 +708,18 @@ void window_toggle_minimize(window_t* win) {
     if (!win || !mode || win == root_window) { return; }
 
     if (win->is_minimized) {
-        window_restore_from_minimized(win);
+        window_restore(win);
+        win->is_minimized = false;
         return;
     }
 
-    win->restore_x = win->x;
-    win->restore_y = win->y;
-    win->restore_w = win->w;
-    win->restore_h = win->h;
-    win->restore_to_maximized = win->is_maximized;
-    win->has_restore_bounds = true;
-    win->is_maximized = false;
-    win->is_minimized = true;
+    window_store(win);
 
     int new_w = win->w;
     if (new_w > mode->width) {
         new_w = mode->width;
     }
-
-    if (!window_set_bounds(win, win->x, win->y, new_w, WIN_MINIMIZED_HEIGHT)) {
-        win->is_minimized = false;
-        win->has_restore_bounds = false;
-        win->restore_to_maximized = false;
-    }
+    win->is_maximized = false;
+    win->is_minimized = true;
+    window_set_bounds(win, win->x, win->y, new_w, WIN_MINIMIZED_HEIGHT);
 }
