@@ -31,6 +31,11 @@ static int g_cmd_buttons = 0;
 static int g_mouse_last_x = 0; // 记录上一帧的鼠标位置
 static int g_mouse_last_y = 0;
 
+static bool window_recreate_surface(window_t* win, int new_w, int new_h);
+static bool window_set_bounds(window_t* win, int x, int y, int w, int h);
+static void window_save_normal_bounds(window_t* win, int x, int y, int w, int h);
+static void window_restore_from_minimized(window_t* win);
+
 static int min_int(int a, int b) { return a < b ? a : b; }
 static int max_int(int a, int b) { return a > b ? a : b; }
 
@@ -117,15 +122,27 @@ void window_manager_handler(void) {
                         int local_x = x - target->x;
                         int local_y = y - target->y;
                         int btn_size = WIN_TITLE_HEIGHT - 6;
-                        int btn_x = target->w - btn_size - 4;
                         int btn_y = 4;
+                        int btn_close_x = target->w - btn_size - 4;
+                        int btn_max_x = btn_close_x - btn_size - 4;
+                        int btn_min_x = btn_max_x - btn_size - 4;
+                        bool in_btn_band = local_y >= btn_y && local_y < btn_y + btn_size;
 
-                        if (local_x >= btn_x && local_x < btn_x + btn_size &&
-                            local_y >= btn_y && local_y < btn_y + btn_size) {
+                        if (in_btn_band &&
+                            local_x >= btn_close_x && local_x < btn_close_x + btn_size) {
                             destroy_window(target);
-                        }
-
-                        else {
+                        } else if (in_btn_band &&
+                                   local_x >= btn_max_x && local_x < btn_max_x + btn_size) {
+                            window_toggle_maximize(target);
+                        } else if (in_btn_band &&
+                                   local_x >= btn_min_x && local_x < btn_min_x + btn_size) {
+                            window_toggle_minimize(target);
+                        } else {
+                            if (target->is_maximized) {
+                                window_toggle_maximize(target);
+                                local_x = x - target->x;
+                                local_y = y - target->y;
+                            }
                             drag_window = target;
                             drag_off_x = x - target->x;
                             drag_off_y = y - target->y;
@@ -140,6 +157,10 @@ void window_manager_handler(void) {
                         drag_window->x = new_x;
                         drag_window->y = new_y;
                         window_invalidate_rect(root_window, drag_window->x, drag_window->y, drag_window->w, drag_window->h);
+                        if (!drag_window->is_maximized && !drag_window->is_minimized) {
+                            window_save_normal_bounds(
+                                drag_window, drag_window->x, drag_window->y, drag_window->w, drag_window->h);
+                        }
                     }
                 }
             } else {
@@ -200,19 +221,26 @@ window_t* create_window(int x, int y, int w, int h, const char* title, uint32_t 
     win->y = y;
     win->w = w;
     win->h = h;
+    if (win->w < WIN_MIN_WIDTH) { win->w = WIN_MIN_WIDTH; }
+    if (win->h < WIN_MIN_HEIGHT) { win->h = WIN_MIN_HEIGHT; }
     win->flags = WIN_FLAG_VISIBLE;
     win->bg_color = bg_color;
+    win->has_saved_normal = false;
+    win->has_restore_bounds = false;
+    win->is_maximized = false;
+    win->is_minimized = false;
+    win->restore_to_maximized = false;
     if (title) strncpy(win->title, title, WIN_TITLE_MAX - 1);
 
     INIT_LIST_HEAD(&win->children);
     INIT_LIST_HEAD(&win->sibling);
 
     // 初始化 Surface
-    win->surface.width = w;
-    win->surface.height = h;
+    win->surface.width = win->w;
+    win->surface.height = win->h;
     win->surface.bpp = 32;
-    win->surface.pitch = w * 4;
-    win->surface.size = w * h * 4;
+    win->surface.pitch = win->w * 4;
+    win->surface.size = (size_t)win->w * win->h * 4;
     win->surface.owns = true;
     win->surface.pixels = kmalloc(win->surface.size);
 
@@ -223,6 +251,8 @@ window_t* create_window(int x, int y, int w, int h, const char* title, uint32_t 
     // 将新窗口加入到 root 的子窗口链表尾部
     win->parent = root_window;
     list_add_tail(&win->sibling, &root_window->children);
+
+    window_save_normal_bounds(win, win->x, win->y, win->w, win->h);
 
     window_invalidate_rect(root_window, win->x, win->y, win->w, win->h);
 
@@ -355,7 +385,9 @@ void window_draw_decoration(window_t* win) {
         2, WIN_TITLE_HEIGHT,
         w - 4, h - WIN_TITLE_HEIGHT - 2
     };
-    graphics_fill_rect(&win->surface, content_rect, win->bg_color);
+    if (content_rect.w > 0 && content_rect.h > 0) {
+        graphics_fill_rect(&win->surface, content_rect, win->bg_color);
+    }
 
     // 绘制标题栏
     graphics_rect_t title_rect = {
@@ -376,13 +408,30 @@ void window_draw_decoration(window_t* win) {
 
     // 绘制关闭按钮
     int btn_size = WIN_TITLE_HEIGHT - 6;
+    int btn_y = 4;
     graphics_rect_t close_rect = {
         w - btn_size - 4,
-        4,
+        btn_y,
         btn_size,
         btn_size
     };
     graphics_fill_rect(&win->surface, close_rect, C_CLOSE_BTN);
+
+    graphics_rect_t max_rect = {
+        w - btn_size * 2 - 8,
+        btn_y,
+        btn_size,
+        btn_size
+    };
+    graphics_fill_rect(&win->surface, max_rect, C_MAX_BTN);
+
+    graphics_rect_t min_rect = {
+        w - btn_size * 3 - 12,
+        btn_y,
+        btn_size,
+        btn_size
+    };
+    graphics_fill_rect(&win->surface, min_rect, C_MIN_BTN);
 
     // TODO: 绘制标题文本, 需要实现文字渲染功能
 }
@@ -392,4 +441,150 @@ void window_manager_on_mouse(int x, int y, int buttons) {
     g_cmd_y = y;
     g_cmd_buttons = buttons;
     g_mouse_event_pending = true;
+}
+
+static bool window_recreate_surface(window_t* win, int new_w, int new_h) {
+    if (!win) { return false; }
+
+    int clamped_w = max_int(new_w, WIN_MIN_WIDTH);
+    int min_h = win->is_minimized ? WIN_MINIMIZED_HEIGHT : WIN_MIN_HEIGHT;
+    int clamped_h = max_int(new_h, min_h);
+
+    size_t new_size = (size_t)clamped_w * clamped_h * 4;
+    void* new_pixels = kmalloc(new_size);
+    if (!new_pixels) {
+        kwarn("window: alloc %zu bytes for resize failed", new_size);
+        return false;
+    }
+
+    if (win->surface.pixels && win->surface.owns) {
+        kfree(win->surface.pixels);
+    }
+
+    win->surface.pixels = new_pixels;
+    win->surface.width = clamped_w;
+    win->surface.height = clamped_h;
+    win->surface.pitch = clamped_w * 4;
+    win->surface.size = new_size;
+    win->surface.owns = true;
+
+    win->w = clamped_w;
+    win->h = clamped_h;
+
+    return true;
+}
+
+static bool window_set_bounds(window_t* win, int x, int y, int w, int h) {
+    if (!win || win == root_window) { return false; }
+
+    int clamped_w = max_int(w, WIN_MIN_WIDTH);
+    int min_h = win->is_minimized ? WIN_MINIMIZED_HEIGHT : WIN_MIN_HEIGHT;
+    int clamped_h = max_int(h, min_h);
+
+    window_invalidate_rect(root_window, win->x, win->y, win->w, win->h);
+
+    if (win->w != clamped_w || win->h != clamped_h || !win->surface.pixels) {
+        if (!window_recreate_surface(win, clamped_w, clamped_h)) {
+            window_invalidate_rect(root_window, win->x, win->y, win->w, win->h);
+            return false;
+        }
+    } else {
+        win->surface.width = clamped_w;
+        win->surface.height = clamped_h;
+        win->surface.pitch = clamped_w * 4;
+        win->surface.size = (size_t)clamped_w * clamped_h * 4;
+    }
+
+    win->x = x;
+    win->y = y;
+    win->w = clamped_w;
+    win->h = clamped_h;
+
+    window_draw_decoration(win);
+    window_invalidate_rect(root_window, win->x, win->y, win->w, win->h);
+    return true;
+}
+
+static void window_save_normal_bounds(window_t* win, int x, int y, int w, int h) {
+    if (!win) { return; }
+    win->saved_normal_x = x;
+    win->saved_normal_y = y;
+    win->saved_normal_w = w;
+    win->saved_normal_h = h;
+    win->has_saved_normal = true;
+}
+
+static void window_restore_from_minimized(window_t* win) {
+    if (!win || !win->is_minimized || !win->has_restore_bounds) { return; }
+
+    bool restore_max = win->restore_to_maximized;
+    win->is_minimized = false;
+    window_set_bounds(win, win->restore_x, win->restore_y, win->restore_w, win->restore_h);
+    win->is_maximized = restore_max;
+    win->has_restore_bounds = false;
+    win->restore_to_maximized = false;
+}
+
+void window_toggle_maximize(window_t* win) {
+    const graphics_mode_t *mode = graphics_current_mode();
+    if (!win || !mode || win == root_window) { return; }
+
+    if (win->is_minimized) {
+        bool was_max = win->restore_to_maximized;
+        window_restore_from_minimized(win);
+        if (was_max) {
+            return;
+        }
+    }
+
+    if (win->is_maximized) {
+        if (win->has_saved_normal) {
+            window_set_bounds(
+                win,
+                win->saved_normal_x,
+                win->saved_normal_y,
+                win->saved_normal_w,
+                win->saved_normal_h);
+        }
+        win->is_maximized = false;
+        return;
+    }
+
+    window_save_normal_bounds(win, win->x, win->y, win->w, win->h);
+    if (window_set_bounds(win, 0, 0, mode->width, mode->height)) {
+        win->is_maximized = true;
+        win->is_minimized = false;
+        win->has_restore_bounds = false;
+        win->restore_to_maximized = false;
+    }
+}
+
+void window_toggle_minimize(window_t* win) {
+    const graphics_mode_t *mode = graphics_current_mode();
+    if (!win || !mode || win == root_window) { return; }
+
+    if (win->is_minimized) {
+        window_restore_from_minimized(win);
+        return;
+    }
+
+    win->restore_x = win->x;
+    win->restore_y = win->y;
+    win->restore_w = win->w;
+    win->restore_h = win->h;
+    win->restore_to_maximized = win->is_maximized;
+    win->has_restore_bounds = true;
+    win->is_maximized = false;
+    win->is_minimized = true;
+
+    int new_w = win->w;
+    if (new_w > mode->width) {
+        new_w = mode->width;
+    }
+
+    if (!window_set_bounds(win, win->x, win->y, new_w, WIN_MINIMIZED_HEIGHT)) {
+        win->is_minimized = false;
+        win->has_restore_bounds = false;
+        win->restore_to_maximized = false;
+    }
 }

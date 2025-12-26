@@ -8,12 +8,17 @@
 
 #define WIN_TITLE_MAX 64
 #define WIN_TITLE_HEIGHT 24
+#define WIN_MIN_WIDTH 80
+#define WIN_MIN_HEIGHT (WIN_TITLE_HEIGHT + 20)
+#define WIN_MINIMIZED_HEIGHT (WIN_TITLE_HEIGHT + 4)
 
 #define C_BORDER_LIGHT  0xFFE0E0E0
 #define C_BORDER_DARK   0xFF404040
 #define C_TITLE_BG      0xFF000080
 #define C_TITLE_TEXT    0xFFFFFFFF
 #define C_CLOSE_BTN     0xFFFF0000
+#define C_MAX_BTN       0xFF00AA00
+#define C_MIN_BTN       0xFFCCCC00
 
 // 窗口状态标志位
 #define WIN_FLAG_VISIBLE    (1 << 0)
@@ -29,6 +34,16 @@ typedef struct window_s {
     int w;
     int h;
 
+    int saved_normal_x;
+    int saved_normal_y;
+    int saved_normal_w;
+    int saved_normal_h;
+
+    int restore_x;
+    int restore_y;
+    int restore_w;
+    int restore_h;
+
     // 窗口内容缓冲
     graphics_surface_t surface;
 
@@ -41,6 +56,12 @@ typedef struct window_s {
     uint32_t flags;
     uint32_t bg_color;      // 背景色, 如果 surface 内容未完全覆盖时使用
     char title[WIN_TITLE_MAX];
+
+    bool has_saved_normal;
+    bool has_restore_bounds;
+    bool is_maximized;
+    bool is_minimized;
+    bool restore_to_maximized;
 
     // 暂时预留, 未来可以扩展为 onClick, onKey 等
     void *user_data;
@@ -102,4 +123,12 @@ void window_draw_decoration(window_t* win);
  * \brief 绘制内容 (目前仅填充背景色)
  */
 void window_fill(window_t* win, uint32_t color);
+/*!
+ * \brief 切换窗口最大化状态
+ */
+void window_toggle_maximize(window_t* win);
+/*!
+ * \brief 切换窗口最小化状态
+ */
+void window_toggle_minimize(window_t* win);
 #endif
