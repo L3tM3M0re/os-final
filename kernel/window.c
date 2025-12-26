@@ -13,6 +13,15 @@
 #define DISABLE_INTERRUPTS() __asm__ volatile("cli")
 #define ENABLE_INTERRUPTS()  __asm__ volatile("sti")
 #define DRAG_THRESHOLD 8
+#define RESIZE_BORDER 6
+
+enum {
+    RESIZE_NONE   = 0,
+    RESIZE_LEFT   = 1 << 0,
+    RESIZE_RIGHT  = 1 << 1,
+    RESIZE_TOP    = 1 << 2,
+    RESIZE_BOTTOM = 1 << 3,
+};
 
 static bool g_handled = false;
 static int drag_start_mx = 0;
@@ -25,6 +34,14 @@ static int win_id_counter = 0;
 static window_t* drag_window = NULL; // 当前正在拖拽的窗口
 static int drag_off_x = 0;           // 鼠标点击位置相对于窗口左上角的偏移
 static int drag_off_y = 0;
+static window_t* resize_window = NULL;
+static int resize_mode = RESIZE_NONE;
+static int resize_start_x = 0;
+static int resize_start_y = 0;
+static int resize_start_w = 0;
+static int resize_start_h = 0;
+static int resize_start_mx = 0;
+static int resize_start_my = 0;
 
 static const graphics_rect_t EMPTY_RECT = {0, 0, 0, 0};
 static graphics_rect_t g_dirty_rect = {0, 0, 0, 0};
@@ -126,7 +143,7 @@ void window_manager_handler(void) {
             bool left_btn = (buttons & 1);
             if (left_btn && !g_handled) {
                 g_handled = true;
-                if (!drag_window) {
+                if (!drag_window && !resize_window) {
                     window_t* target = window_from_point(x, y);
                     if (target && target != root_window) {
                         int local_x = x - target->x;
@@ -149,32 +166,76 @@ void window_manager_handler(void) {
                                    local_x >= btn_min_x && local_x < btn_min_x + btn_size) {
                             window_toggle_minimize(target);
                             window_bring_to_front(target);
-                        } else if (local_y < WIN_TITLE_HEIGHT) {
-                            drag_window = target;
-                            drag_off_x = x - target->x;
-                            drag_off_y = y - target->y;
-                            drag_start_mx = x;
-                            drag_start_my = y;
-                            is_drag_active = false;
-                            window_bring_to_front(target);
                         } else {
-                            window_bring_to_front(target);
+                            int mode = RESIZE_NONE;
+                            if (!target->is_minimized) {
+                                if (local_x < RESIZE_BORDER) mode |= RESIZE_LEFT;
+                                if (local_x >= target->w - RESIZE_BORDER) mode |= RESIZE_RIGHT;
+                                if (local_y < RESIZE_BORDER) mode |= RESIZE_TOP;
+                                if (local_y >= target->h - RESIZE_BORDER) mode |= RESIZE_BOTTOM;
+                            }
+
+                            if (mode != RESIZE_NONE) {
+                                if (target->is_maximized) {
+                                    window_toggle_maximize(target);
+                                }
+                                resize_window   = target;
+                                resize_mode     = mode;
+                                resize_start_x  = target->x;
+                                resize_start_y  = target->y;
+                                resize_start_w  = target->w;
+                                resize_start_h  = target->h;
+                                resize_start_mx = x;
+                                resize_start_my = y;
+                                window_bring_to_front(target);
+                            } else if (local_y < WIN_TITLE_HEIGHT) {
+                                drag_window = target;
+                                drag_off_x = x - target->x;
+                                drag_off_y = y - target->y;
+                                drag_start_mx = x;
+                                drag_start_my = y;
+                                is_drag_active = false;
+                                window_bring_to_front(target);
+                            } else {
+                                window_bring_to_front(target);
+                            }
                         }
                     }
                 }
             } else if (left_btn && g_handled) {
-                if (!drag_window) {
+                if (resize_window) {
+                    int dx = x - resize_start_mx;
+                    int dy = y - resize_start_my;
 
-                } else {
+                    int new_x = resize_start_x;
+                    int new_y = resize_start_y;
+                    int new_w = resize_start_w;
+                    int new_h = resize_start_h;
+
+                    if (resize_mode & RESIZE_LEFT) {
+                        new_x = resize_start_x + dx;
+                        new_w = resize_start_w - dx;
+                    }
+                    if (resize_mode & RESIZE_RIGHT) {
+                        new_w = resize_start_w + dx;
+                    }
+                    if (resize_mode & RESIZE_TOP) {
+                        new_y = resize_start_y + dy;
+                        new_h = resize_start_h - dy;
+                    }
+                    if (resize_mode & RESIZE_BOTTOM) {
+                        new_h = resize_start_h + dy;
+                    }
+
+                    window_set_bounds(resize_window, new_x, new_y, new_w, new_h);
+                } else if (drag_window) {
                     if (!is_drag_active) {
                         int dx = x - drag_start_mx;
                         int dy = y - drag_start_my;
                         if (dx < 0) dx = -dx;
                         if (dy < 0) dy = -dy;
 
-                        if (dx < DRAG_THRESHOLD && dy < DRAG_THRESHOLD) {
-
-                        } else {
+                        if (dx >= DRAG_THRESHOLD || dy >= DRAG_THRESHOLD) {
                             is_drag_active = true;
                         }
                     }
@@ -209,6 +270,10 @@ void window_manager_handler(void) {
                     }
                 }
             } else {
+                if (resize_window) {
+                    resize_window = NULL;
+                    resize_mode = RESIZE_NONE;
+                }
                 if (drag_window) {
                     window_store_pos(drag_window, drag_window->x, drag_window->y);
                     drag_window = NULL;
@@ -219,6 +284,9 @@ void window_manager_handler(void) {
 
             g_mouse_last_x = x;
             g_mouse_last_y = y;
+
+            // 立即刷新光标，避免拖动时出现残影
+            graphics_cursor_render();
         }
 
         if (g_has_dirty) {
