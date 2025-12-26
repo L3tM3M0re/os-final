@@ -28,7 +28,13 @@ enum {
     NR_killerabbit,
     NR_environ,
     NR_krnlobj_request,
-    NR_sendrec,
+
+    NR_open_window,
+    NR_close_window,
+    NR_refresh_window,
+    NR_refresh_all_window,
+    NR_get_root_window_handle,
+    NR_sendrec,               //< 进程间通信 (IPC)
 
     //! total syscalls
     NR_SYSCALLS = NR_sendrec + 1,
@@ -80,6 +86,3 @@ bool do_environ(int op, char *const **p_envp);
 
 //! from sync.c
 int do_krnlobj_request(int req, void *arg);
-
-//! from ipc.c
-int do_sendrec(int function, int src_dest, void* m);

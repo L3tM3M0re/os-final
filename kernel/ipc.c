@@ -7,7 +7,7 @@
 #include <sys/types.h>
 #include <string.h>         // memcpy
 
-static void copy_msg(process_t* dest, process_t* src, message_t* dst_va, message_t* src_va);
+static void copy_msg(process_t* dest, process_t* src, message_t* dst_va, message_t* src_va, int override_source);
 static int msg_send(process_t* current, int dest_pid, message_t* m);
 static int msg_receive(process_t* current, int src_pid, message_t* m);
 static void block(process_t* p);
@@ -20,7 +20,7 @@ static void unblock(process_t* p);
  * \param dst_va   目标进程中的虚拟地址 (接收缓冲区)
  * \param src_va   源进程中的虚拟地址 (发送缓冲区)
  */
-static void copy_msg(process_t* dest, process_t* src, message_t* dst_va, message_t* src_va) {
+static void copy_msg(process_t* dest, process_t* src, message_t* dst_va, message_t* src_va, int override_source) {
     message_t msg_buf;
     uint32_t current_cr3 = rcr3(); // 使用 rcr3 获取当前页目录基址
 
@@ -32,6 +32,10 @@ static void copy_msg(process_t* dest, process_t* src, message_t* dst_va, message
     }
     // 使用 src 的页表，可以直接访问 src_va
     memcpy(&msg_buf, src_va, sizeof(message_t));
+
+    if (override_source != NO_TASK) {
+        msg_buf.source = override_source;
+    }
 
     // 切换到目标进程空间写入消息
     if (dest->pcb.cr3 != rcr3()) {
@@ -108,8 +112,7 @@ static int msg_send(process_t* current, int dest_pid, message_t* m) {
         assert(m != NULL);
 
         // 拷贝消息到目标的缓冲区
-        copy_msg(dest, current, dest->pcb.p_msg, m);
-        dest->pcb.p_msg->source = proc2pid(current);
+        copy_msg(dest, current, dest->pcb.p_msg, m, proc2pid(current));
 
         // 唤醒目标
         dest->pcb.p_recvfrom = NO_TASK;
@@ -182,8 +185,7 @@ static int msg_receive(process_t* current, int src_pid, message_t* m) {
         assert(m != NULL);
         assert(sender->pcb.p_msg != NULL);
 
-        copy_msg(current, sender, m, sender->pcb.p_msg);
-        m->source = proc2pid(sender);
+        copy_msg(current, sender, m, sender->pcb.p_msg, proc2pid(sender));
 
         // 唤醒发送者
         sender->pcb.p_sendto = NO_TASK;

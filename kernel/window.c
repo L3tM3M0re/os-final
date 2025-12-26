@@ -23,13 +23,14 @@ enum {
     RESIZE_BOTTOM = 1 << 3,
 };
 
+static window_t* handle_table[WIN_MAX_WINDOWS]; // 句柄表
+
 static bool g_handled = false;
 static int drag_start_mx = 0;
 static int drag_start_my = 0;
 static bool is_drag_active = false;
 
 static window_t* root_window = NULL;
-static int win_id_counter = 0;
 
 static window_t* drag_window = NULL; // 当前正在拖拽的窗口
 static int drag_off_x = 0;           // 鼠标点击位置相对于窗口左上角的偏移
@@ -66,6 +67,47 @@ static void window_restore(window_t* win);
 
 static int min_int(int a, int b) { return a < b ? a : b; }
 static int max_int(int a, int b) { return a > b ? a : b; }
+
+static bool check_window_handle(window_t *win, int handle) {
+    if (handle < 0 || handle >= WIN_MAX_WINDOWS) {
+        return false;
+    }
+    if (handle_table[handle] != win) {
+        return false;
+    }
+    return true;
+}
+
+static bool set_window_by_handle(window_t *win, int handle) {
+    if (handle < 0 || handle >= WIN_MAX_WINDOWS) {
+        return false;
+    }
+    if (!handle_table[handle] || handle_table[handle]->id != handle) {
+        return false;
+    }
+    win = handle_table[handle];
+    return true;
+}
+
+static bool try_create_window(window_t* win) {
+    for (int i = 0; i < WIN_MAX_WINDOWS; ++i) {
+        if (handle_table[i] == NULL) {
+            handle_table[i] = win;
+            win->id = i;
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool try_destroy_window(window_t* win) {
+    int id = win->id;
+    if (!check_window_handle(win, id)) {
+        return false;
+    }
+    handle_table[id] = NULL;
+    return true;
+}
 
 // 简单矩形并
 static graphics_rect_t rect_union(graphics_rect_t a, graphics_rect_t b) {
@@ -132,7 +174,6 @@ void window_invalidate_rect(window_t* win, int x, int y, int w, int h) {
 void window_manager_handler(void) {
     int last_refresh_tick = 0;
     while (true) {
-
         if (g_mouse_event_pending) {
             DISABLE_INTERRUPTS();
             int x = g_cmd_x;
@@ -308,12 +349,20 @@ void init_window_manager() {
     root_window = kmalloc(sizeof(window_t));
     memset(root_window, 0, sizeof(window_t));
 
-    root_window->id = win_id_counter++;
+    if (!try_create_window(root_window)) {
+        kerror("Failed to create root window");
+        return;
+    }
+
+    strncpy(root_window->title, "Desktop", WIN_TITLE_MAX - 1);
     root_window->x = 0;
     root_window->y = 0;
     root_window->w = mode->width;
     root_window->h = mode->height;
     root_window->flags = WIN_FLAG_VISIBLE;
+
+
+
 
     INIT_LIST_HEAD(&root_window->children);
     INIT_LIST_HEAD(&root_window->sibling);
@@ -330,7 +379,11 @@ window_t* create_window(int x, int y, int w, int h, const char* title, uint32_t 
     if (!win) return NULL;
     memset(win, 0, sizeof(window_t));
 
-    win->id = win_id_counter++;
+    if (!try_create_window(win)) {
+        kfree(win);
+        return NULL;
+    }
+
     win->x = x;
     win->y = y;
     win->w = w;
@@ -379,6 +432,8 @@ void destroy_window(window_t* win) {
     window_invalidate_rect(root_window, win->x, win->y, win->w, win->h);
 
     list_del(&win->sibling);
+
+    try_destroy_window(win);
 
     // 释放资源
     if (win->surface.pixels && win->surface.owns) {
@@ -790,4 +845,48 @@ void window_toggle_minimize(window_t* win) {
     win->is_maximized = false;
     win->is_minimized = true;
     window_set_bounds(win, win->x, win->y, new_w, WIN_MINIMIZED_HEIGHT);
+}
+
+void window_refresh(window_t* win) {
+    if (!win) { return; }
+    window_invalidate_rect(root_window, win->x, win->y, win->w, win->h);
+}
+
+/* Syscall */
+
+int do_get_root_window_handle() {
+    if (!root_window) { return -1; }
+    int id = root_window->id;
+    if (!check_window_handle(root_window, id)) {
+        return -1;
+    }
+    return id;
+}
+int do_open_window(int x, int y, int w, int h, const char* title, uint32_t bg_color) {
+    window_t* win = create_window(x, y, w, h, title, bg_color);
+    if (!win) {
+        return -1;
+    }
+    int id = win->id;
+    if (!check_window_handle(win, id)) {
+        destroy_window(win);
+        return -1;
+    }
+    return id;
+}
+bool do_close_window(int handle) {
+    window_t *win;
+    if (!set_window_by_handle(win, handle)) { return false; }
+    destroy_window(win);
+    return true;
+}
+bool do_refresh_window(int handle) {
+    window_t *win;
+    if (!set_window_by_handle(win, handle)) { return false; }
+    window_refresh(win);
+    return true;
+}
+bool do_refresh_all_window() {
+    window_manager_refresh();
+    return true;
 }

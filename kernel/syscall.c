@@ -2,6 +2,8 @@
 #include <unios/assert.h>
 #include <unios/proc.h>
 #include <unios/ipc.h>
+#include <unios/window.h>
+#include <unios/graphics.h>
 #include <arch/x86.h>
 #include <sys/types.h>
 #include <stdint.h>
@@ -156,6 +158,26 @@ static uint32_t sys_krnlobj_request() {
     return do_krnlobj_request(SYSCALL_ARGS2(int, void *));
 }
 
+static uint32_t sys_open_window() {
+    return do_open_window(SYSCALL_ARGS6(int, int, int, int, const char *, uint32_t));
+}
+
+static uint32_t sys_close_window() {
+    return do_close_window(SYSCALL_ARGS1(int));
+}
+
+static uint32_t sys_refresh_window() {
+    return do_refresh_window(SYSCALL_ARGS1(int));
+}
+
+static uint32_t sys_refresh_all_window() {
+    return do_refresh_all_window();
+}
+
+static uint32_t sys_get_root_window_handle() {
+    return do_get_root_window_handle();
+}
+
 static uint32_t sys_sendrec() {
     return do_sendrec(SYSCALL_ARGS3(int, int, message_t*));
 }
@@ -186,5 +208,10 @@ syscall_t syscall_table[NR_SYSCALLS] = {
     SYSCALL_ENTRY(killerabbit),
     SYSCALL_ENTRY(environ),
     SYSCALL_ENTRY(krnlobj_request),
+    SYSCALL_ENTRY(open_window),
+    SYSCALL_ENTRY(close_window),
+    SYSCALL_ENTRY(refresh_window),
+    SYSCALL_ENTRY(refresh_all_window),
+    SYSCALL_ENTRY(get_root_window_handle),
     SYSCALL_ENTRY(sendrec),
 };

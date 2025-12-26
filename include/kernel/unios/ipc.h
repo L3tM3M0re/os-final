@@ -1,7 +1,7 @@
 #pragma once
 
 #include <stdint.h>
-#include <unios/proc.h>
+#include <unios/layout.h>
 
 // IPC 常量定义
 #define SEND        1

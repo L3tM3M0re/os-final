@@ -3,6 +3,11 @@
 #include <sys/types.h>
 #include <stddef.h> // IWYU pragma: keep
 
+#define NR_PCBS      64 //<! total pcbs
+#define NR_TASKS     3  //<! predefined task k-pcbs
+#define NR_K_PCBS    3  //<! reserved k-pcbs, only predefined tasks currently
+#define NR_RECY_PROC 1  //<! no. of recycler proc `scanvenger`
+
 #define NUM_4B 0x00000004
 #define NUM_1K 0x00000400
 #define NUM_4K 0x00001000

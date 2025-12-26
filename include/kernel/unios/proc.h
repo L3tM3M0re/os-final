@@ -52,10 +52,13 @@
 #define SSREG        (NR_SSREG * 4)
 #define P_STACKTOP   (SSREG + 4)
 
-#define NR_PCBS      64 //<! total pcbs
-#define NR_TASKS     3  //<! predefined task k-pcbs
-#define NR_K_PCBS    3  //<! reserved k-pcbs, only predefined tasks currently
-#define NR_RECY_PROC 1  //<! no. of recycler proc `scanvenger`
+// 为了解决循环包含问题，以下宏定义放在 layout.h 中
+// #define NR_PCBS      64 //<! total pcbs
+// #define NR_TASKS     3  //<! predefined task k-pcbs
+// #define NR_K_PCBS    3  //<! reserved k-pcbs, only predefined tasks currently
+// #define NR_RECY_PROC 1  //<! no. of recycler proc `scanvenger`
+
+
 
 #define NR_FILES 64
 

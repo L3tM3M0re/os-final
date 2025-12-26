@@ -6,6 +6,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#define WIN_MAX_WINDOWS 256
+
 #define WIN_TITLE_MAX 64
 #define WIN_TITLE_HEIGHT 24
 #define WIN_MIN_WIDTH 80
@@ -126,4 +128,13 @@ void window_toggle_maximize(window_t* win);
  * \brief 切换窗口最小化状态
  */
 void window_toggle_minimize(window_t* win);
+
+/* Syscall */
+
+int do_get_root_window_handle();                                                        //< 获取根窗口句柄
+int do_open_window(int x, int y, int w, int h, const char* title, uint32_t bg_color);   //< 创建窗口, 返回窗口句柄
+bool do_close_window(int handle);                                                       //< 关闭窗口
+bool do_refresh_window(int handle);                                                     //< 刷新指定窗口
+bool do_refresh_all_window();                                                           //< 刷新所有窗口
+
 #endif

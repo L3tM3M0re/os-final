@@ -68,6 +68,26 @@ static int syscall5(
     return ret;
 }
 
+static int syscall6(
+    uint32_t NR_syscall,
+    uint32_t p1,
+    uint32_t p2,
+    uint32_t p3,
+    uint32_t p4,
+    uint32_t p5,
+    uint32_t p6) {
+    int ret = 0;
+    asm volatile(
+        "push %%ebp\n\t"
+        "movl %7, %%ebp\n\t"
+        "int $0x80\n\t"
+        "pop %%ebp\n\t"
+        : "=a"(ret)
+        : "a"(NR_syscall), "b"(p1), "c"(p2), "d"(p3), "S"(p4), "D"(p5), "g"(p6) // "g" 让编译器决定 p6 放在哪（内存或寄存器），我们手动 move
+        : "cc", "memory");
+    return ret;
+}
+
 int get_ticks() {
     return syscall0(NR_get_ticks);
 }
@@ -191,4 +211,24 @@ char *const *getenv() {
     char **envp = NULL;
     bool   ok   = syscall2(NR_environ, ENVIRON_GET, (uint32_t)&envp);
     return envp;
+}
+
+int open_window(int x, int y, int w, int h, const char* title, uint32_t bg_color) {
+    return syscall6(NR_open_window, x, y, w, h, (uint32_t)title, bg_color);
+}
+bool close_window(int handle) {
+    return syscall1(NR_close_window, handle);
+}
+bool refresh_window(int handle) {
+    return syscall1(NR_refresh_window, handle);
+}
+bool refresh_all_window() {
+    return syscall0(NR_refresh_all_window);
+}
+int get_root_window_handle() {
+    return syscall0(NR_get_root_window_handle);
+}
+
+int sendrec(int function, int src_dest, message_t* m) {
+    return syscall3(NR_sendrec, function, src_dest, (uint32_t)m);
 }

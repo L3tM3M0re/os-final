@@ -192,7 +192,7 @@ void mouse_handler(int irq) {
         int    dy     = -dy_raw; // ps/2 y 负号代表向下
 
         //! drag offset for legacy tty usage
-        if (tty->mouse.buttons & MOUSE_LEFT_BUTTON) {
+        if (tty != NULL && (tty->mouse.buttons & MOUSE_LEFT_BUTTON)) {
             tty->mouse.off_x += dx;
             tty->mouse.off_y += dy;
         }

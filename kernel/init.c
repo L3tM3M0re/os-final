@@ -147,9 +147,48 @@ void init() {
     init_setup_envs();
     init_untar_user_progs();
     init_enable_preinited_procs();
-    while (true) {
-        init_handle_new_tty();
-        yield();
+    // while (true) {
+    //     init_handle_new_tty();
+    //     yield();
+    // }
+
+    int pid = fork();
+    if (pid == 0) {
+        // --- 子进程 ---
+
+        // (可选) 如果 gui_server 需要输出调试信息到串口，可以打开标准文件描述符
+        // 这里的 "/dev_tty0" 取决于你 TTY 的命名，如果不需要 printf 可以省略
+        // int fd = open("/dev_tty0", O_RDWR);
+        // if (fd != -1) {
+        //     dup2(fd, 0); dup2(fd, 1); dup2(fd, 2);
+        // }
+
+        // 执行 gui_server
+        // 因为 PATH 已经在 init_setup_envs 里设为 /orange 了，直接写文件名即可
+        exec("gui_server");
+
+        // 如果 exec 返回，说明出错了
+        kinfo("Failed to exec gui_server!");
+        exit(1);
+    } else {
+        // --- 父进程 (init) ---
+        // init 进程不能退出，它需要负责回收僵尸进程
+        while (true) {
+            int status;
+            int child_pid = wait(&status); // 阻塞等待任意子进程退出
+
+            // 如果 gui_server 意外挂了，这里可以决定是否重启它
+            if (child_pid == pid) {
+                kinfo("gui_server exited, restarting...");
+                // 简单的重启逻辑：
+                pid = fork();
+                if (pid == 0) {
+                    exec("gui_server");
+                    exit(1);
+                }
+            }
+        }
     }
+
     unreachable();
 }

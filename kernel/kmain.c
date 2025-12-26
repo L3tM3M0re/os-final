@@ -31,9 +31,9 @@ void kernel_main() {
     font_init();
     kinfo("init font done");
 
-    // graphics_boot_demo();
+    graphics_boot_demo();
 
-    // init_window_manager();
+    init_window_manager();
 
     // window_t* win1 = create_window(50, 50, 200, 150, "Win1中文测试", 0xFFFF0000); // 红
     // window_t* win2 = create_window(150, 100, 200, 150, "Win2", 0xFF00FF00); // 绿
