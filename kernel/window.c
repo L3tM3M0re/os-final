@@ -5,12 +5,15 @@
 #include <unios/tracing.h>
 #include <lib/string.h>
 #include <lib/container_of.h>
+#include <unios/font.h>
 #include <stdlib.h>
 #include <stddef.h>
 #include <arch/x86.h>
 
 #define DISABLE_INTERRUPTS() __asm__ volatile("cli")
 #define ENABLE_INTERRUPTS()  __asm__ volatile("sti")
+
+static bool g_handled = false;
 
 static window_t* root_window = NULL;
 static int win_id_counter = 0;
@@ -115,7 +118,8 @@ void window_manager_handler(void) {
             ENABLE_INTERRUPTS();
             need_render_cursor = true;
             bool left_btn = (buttons & 1);
-            if (left_btn) {
+            if (left_btn && !g_handled) {
+                g_handled = true;
                 if (!drag_window) {
                     window_t* target = window_from_point(x, y);
                     if (target && target != root_window) {
@@ -137,7 +141,7 @@ void window_manager_handler(void) {
                         } else if (in_btn_band &&
                                    local_x >= btn_min_x && local_x < btn_min_x + btn_size) {
                             window_toggle_minimize(target);
-                        } else {
+                        } else if (local_y < WIN_TITLE_HEIGHT) {
                             if (target->is_maximized) {
                                 window_toggle_maximize(target);
                                 local_x = x - target->x;
@@ -146,6 +150,8 @@ void window_manager_handler(void) {
                             drag_window = target;
                             drag_off_x = x - target->x;
                             drag_off_y = y - target->y;
+                            window_bring_to_front(target);
+                        } else {
                             window_bring_to_front(target);
                         }
                     }
@@ -163,8 +169,26 @@ void window_manager_handler(void) {
                         }
                     }
                 }
+            } else if (left_btn && g_handled) {
+                if (!drag_window) {
+
+                } else {
+                    int new_x = x - drag_off_x;
+                    int new_y = y - drag_off_y;
+                    if (drag_window->x != new_x || drag_window->y != new_y) {
+                        window_invalidate_rect(root_window, drag_window->x, drag_window->y, drag_window->w, drag_window->h);
+                        drag_window->x = new_x;
+                        drag_window->y = new_y;
+                        window_invalidate_rect(root_window, drag_window->x, drag_window->y, drag_window->w, drag_window->h);
+                        if (!drag_window->is_maximized && !drag_window->is_minimized) {
+                            window_save_normal_bounds(
+                                drag_window, drag_window->x, drag_window->y, drag_window->w, drag_window->h);
+                        }
+                    }
+                }
             } else {
                 if (drag_window) drag_window = NULL;
+                g_handled = false;
             }
 
             g_mouse_last_x = x;
@@ -396,6 +420,78 @@ void window_draw_decoration(window_t* win) {
     };
     graphics_fill_rect(&win->surface, title_rect, C_TITLE_BG);
 
+    int text_x = 6;
+    int text_y = (WIN_TITLE_HEIGHT - 16) / 2 + 1;
+
+    int btn_size = WIN_TITLE_HEIGHT - 6;
+    int buttons_start_x = w - btn_size * 3 - 12;
+    int max_text_width = buttons_start_x - text_x - 4;
+
+    // TODO: 实现可调大小文字
+    if (win->title[0] != '\0' && max_text_width > 0) {
+        char display_title[WIN_TITLE_MAX];
+        int src_idx = 0;
+        int dst_idx = 0;
+        int current_width = 0;
+        int title_full_len = strlen(win->title);
+
+        if (title_full_len * 8 <= max_text_width) {
+            strncpy(display_title, win->title, sizeof(display_title)-1);
+            display_title[sizeof(display_title)-1] = '\0';
+        } else {
+            int width_limit = max_text_width - 24;
+            int need_ellipsis = 0;
+
+            while (win->title[src_idx] != '\0' && dst_idx < sizeof(display_title) - 4) {
+                unsigned char c = (unsigned char)win->title[src_idx];
+                int char_w = 0;
+                int char_bytes = 0;
+
+                if (c < 128) {
+                    char_w = ASCII_WIDTH;
+                    char_bytes = 1;
+                } else {
+                    char_w = FONT_WIDTH;
+
+                    if ((c & 0xE0) == 0xC0) char_bytes = 2;      // 2字节字符
+                    else if ((c & 0xF0) == 0xE0) char_bytes = 3; // 3字节字符 (汉字通常在这里)
+                    else if ((c & 0xF8) == 0xF0) char_bytes = 4; // 4字节字符
+                    else char_bytes = 1; // 异常情况，当1字节处理
+                }
+
+                if (current_width + char_w > width_limit) {
+                    need_ellipsis = 1;
+                    break;
+                }
+
+                for (int k = 0; k < char_bytes; k++) {
+                    if (win->title[src_idx] == '\0') break;
+                    display_title[dst_idx++] = win->title[src_idx++];
+                }
+
+                current_width += char_w;
+            }
+
+            if (need_ellipsis || win->title[src_idx] != '\0') {
+                if (dst_idx < sizeof(display_title) - 4) {
+                    display_title[dst_idx++] = '.';
+                    display_title[dst_idx++] = '.';
+                    display_title[dst_idx++] = '.';
+                }
+            }
+            display_title[dst_idx] = '\0';
+        }
+
+        // 绘制处理后的文字
+        if (display_title[0] != '\0') {
+            graphics_draw_text(&win->surface, text_x, text_y, display_title, 0xFFFFFFFF);
+        }
+    }
+
+    // if (win->title[0] != '\0') {
+    //     graphics_draw_text(&win->surface, text_x, text_y, win->title, 0xFFFFFFFF);
+    // }
+
     // 绘制边框
     graphics_rect_t r_top = {0, 0, w, 2};
     graphics_fill_rect(&win->surface, r_top, C_BORDER_LIGHT);
@@ -407,7 +503,6 @@ void window_draw_decoration(window_t* win) {
     graphics_fill_rect(&win->surface, r_right, C_BORDER_DARK);
 
     // 绘制关闭按钮
-    int btn_size = WIN_TITLE_HEIGHT - 6;
     int btn_y = 4;
     graphics_rect_t close_rect = {
         w - btn_size - 4,
@@ -432,8 +527,6 @@ void window_draw_decoration(window_t* win) {
         btn_size
     };
     graphics_fill_rect(&win->surface, min_rect, C_MIN_BTN);
-
-    // TODO: 绘制标题文本, 需要实现文字渲染功能
 }
 
 void window_manager_on_mouse(int x, int y, int buttons) {

@@ -1,6 +1,15 @@
 #include <stdint.h>
 #include <string.h>
 
+#define GLYPH_SIZE 32
+
+#define FONT_LBA_START  54000
+#define FONT_SIZE_BYTES (2 * 1024 * 1024)
+#define SECTOR_SIZE     512
+#define FONT_WIDTH 16
+#define FONT_HEIGHT 16
+#define ASCII_WIDTH 8
+
 int font_init(void);
 /*!
  * \brief 从 str 中解码一个 UTF-8 字符

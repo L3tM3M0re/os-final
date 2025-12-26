@@ -6,12 +6,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define GLYPH_SIZE 32
-
-#define FONT_LBA_START  54000
-#define FONT_SIZE_BYTES (2 * 1024 * 1024)
-#define SECTOR_SIZE     512
-
 static uint8_t *font_data = NULL;
 static size_t   font_size = 0;
 
