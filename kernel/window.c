@@ -168,7 +168,7 @@ void window_manager_handler(void) {
                             window_bring_to_front(target);
                         } else {
                             int mode = RESIZE_NONE;
-                            if (!target->is_minimized) {
+                            if (!target->is_maximized && !target->is_minimized) {
                                 if (local_x < RESIZE_BORDER) mode |= RESIZE_LEFT;
                                 if (local_x >= target->w - RESIZE_BORDER) mode |= RESIZE_RIGHT;
                                 if (local_y < RESIZE_BORDER) mode |= RESIZE_TOP;
@@ -213,14 +213,14 @@ void window_manager_handler(void) {
                     int new_h = resize_start_h;
 
                     if (resize_mode & RESIZE_LEFT) {
-                        new_x = resize_start_x + dx;
+                        new_x = min_int(resize_start_x + dx, resize_start_x + resize_start_w - WIN_MIN_WIDTH);
                         new_w = resize_start_w - dx;
                     }
                     if (resize_mode & RESIZE_RIGHT) {
                         new_w = resize_start_w + dx;
                     }
                     if (resize_mode & RESIZE_TOP) {
-                        new_y = resize_start_y + dy;
+                        new_y = min_int(resize_start_y + dy, resize_start_y + resize_start_h - WIN_MIN_HEIGHT);
                         new_h = resize_start_h - dy;
                     }
                     if (resize_mode & RESIZE_BOTTOM) {
@@ -228,6 +228,9 @@ void window_manager_handler(void) {
                     }
 
                     window_set_bounds(resize_window, new_x, new_y, new_w, new_h);
+
+                    window_invalidate_rect(root_window, g_mouse_last_x, g_mouse_last_y, 32, 32);
+                    window_invalidate_rect(root_window, x, y, 32, 32);
                 } else if (drag_window) {
                     if (!is_drag_active) {
                         int dx = x - drag_start_mx;
@@ -284,9 +287,6 @@ void window_manager_handler(void) {
 
             g_mouse_last_x = x;
             g_mouse_last_y = y;
-
-            // 立即刷新光标，避免拖动时出现残影
-            graphics_cursor_render();
         }
 
         if (g_has_dirty) {
