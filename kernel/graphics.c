@@ -333,6 +333,8 @@ static void cursor_build_bitmap() {
                 pix = 0xff543721;
             } else if (c == 'D') {
                 pix = 0xffaf7244;
+            } else {
+                pix = 0x00000000;
             }
             g_cursor_pixels[y * 16 + x] = pix;
         }

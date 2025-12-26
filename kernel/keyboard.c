@@ -56,7 +56,7 @@ static void mouse_wait_ack() {
     }
 }
 
-// 封装好的写鼠标命令函数：写入命令 -> 等待 ACK
+// 封装好的写鼠标命令函数: 写入命令 -> 等待 ACK
 static void mouse_write(uint8_t byte) {
     kb_wait();          // 等待输入缓冲区空 (CPU -> KBC)
     outb(KB_CMD, 0xD4); // 发送“下一个字节是给鼠标的”命令
