@@ -2,6 +2,7 @@
 #include <unios/page.h>
 #include <unios/tracing.h>
 #include <unios/memory.h>
+#include <unios/font.h>
 #include <arch/x86.h>
 #include <config.h>
 #include <unios/layout.h>
@@ -708,4 +709,84 @@ void graphics_lock(void) {
 
 void graphics_unlock(void) {
     g_graphics_lock = false;
+}
+
+void graphics_draw_glyph(graphics_surface_t *dst, int x, int y, const uint8_t *bitmap, uint32_t color) {
+    if (!dst || !dst->pixels || !bitmap) return;
+
+    int max_x = dst->width;
+    int max_y = dst->height;
+
+    for (int row = 0; row < 16; ++row) {
+        int draw_y = y + row;
+        if (draw_y < 0 || draw_y >= max_y) continue;
+
+        // bitmap 存储格式：Row0_Left, Row0_Right, Row1_Left, ...
+        uint8_t byte_left = bitmap[row * 2];
+        uint8_t byte_right = bitmap[row * 2 + 1];
+
+        uint16_t row_bits = ((uint16_t)byte_left << 8) | byte_right;
+
+        for (int col = 0; col < 16; ++col) {
+            if (row_bits & (0x8000 >> col)) {
+                int draw_x = x + col;
+
+                if (draw_x >= 0 && draw_x < max_x) {
+                    uint32_t *pixel = (uint32_t*)dst->pixels + draw_y * (dst->pitch / 4) + draw_x;
+                    *pixel = color;
+                }
+            }
+        }
+    }
+}
+
+void graphics_draw_hollow_rect(graphics_surface_t *dst, int x, int y, int w, int h, uint32_t color) {
+    if (w <= 0 || h <= 0) return;
+
+    graphics_rect_t r_top = {x, y, w, 1};
+    graphics_fill_rect(dst, r_top, color);
+
+    graphics_rect_t r_bottom = {x, y + h - 1, w, 1};
+    graphics_fill_rect(dst, r_bottom, color);
+
+    graphics_rect_t r_left = {x, y, 1, h};
+    graphics_fill_rect(dst, r_left, color);
+
+    graphics_rect_t r_right = {x + w - 1, y, 1, h};
+    graphics_fill_rect(dst, r_right, color);
+}
+
+void graphics_draw_text(graphics_surface_t *dst, int x, int y, const char *text, uint32_t color) {
+    if (!text) return;
+
+    int cur_x = x;
+    int cur_y = y;
+    const char *p = text;
+
+    while (*p) {
+        uint32_t code = 0;
+        int bytes = utf8_decode(p, &code);
+
+        if (code == '\n') {
+            cur_x = x;
+            cur_y += 16;
+            p += bytes;
+            continue;
+        }
+
+        // 获取字形数据
+        const uint8_t *bitmap = get_glyph_bitmap(code);
+
+        if (bitmap) {
+            graphics_draw_glyph(dst, cur_x, cur_y, bitmap, color);
+            int advance = (code < 128) ? 8 : 16;
+            cur_x += advance;
+        } else {
+            // 字库里没有这个字, 空框占位
+            graphics_draw_hollow_rect(dst, cur_x + 1, cur_y + 1, 14, 14, color);
+            cur_x += 16;
+        }
+
+        p += bytes;
+    }
 }
