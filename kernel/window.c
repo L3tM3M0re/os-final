@@ -12,8 +12,12 @@
 
 #define DISABLE_INTERRUPTS() __asm__ volatile("cli")
 #define ENABLE_INTERRUPTS()  __asm__ volatile("sti")
+#define DRAG_THRESHOLD 8
 
 static bool g_handled = false;
+static int drag_start_mx = 0;
+static int drag_start_my = 0;
+static bool is_drag_active = false;
 
 static window_t* root_window = NULL;
 static int win_id_counter = 0;
@@ -107,7 +111,6 @@ void window_invalidate_rect(window_t* win, int x, int y, int w, int h) {
 void window_manager_handler(void) {
     int last_refresh_tick = 0;
     while (true) {
-        bool need_render_cursor = false;
 
         if (g_mouse_event_pending) {
             DISABLE_INTERRUPTS();
@@ -116,7 +119,6 @@ void window_manager_handler(void) {
             int buttons = g_cmd_buttons;
             g_mouse_event_pending = false;
             ENABLE_INTERRUPTS();
-            need_render_cursor = true;
             bool left_btn = (buttons & 1);
             if (left_btn && !g_handled) {
                 g_handled = true;
@@ -138,34 +140,21 @@ void window_manager_handler(void) {
                         } else if (in_btn_band &&
                                    local_x >= btn_max_x && local_x < btn_max_x + btn_size) {
                             window_toggle_maximize(target);
+                            window_bring_to_front(target);
                         } else if (in_btn_band &&
                                    local_x >= btn_min_x && local_x < btn_min_x + btn_size) {
                             window_toggle_minimize(target);
+                            window_bring_to_front(target);
                         } else if (local_y < WIN_TITLE_HEIGHT) {
-                            if (target->is_maximized) {
-                                window_toggle_maximize(target);
-                                local_x = x - target->x;
-                                local_y = y - target->y;
-                            }
                             drag_window = target;
                             drag_off_x = x - target->x;
                             drag_off_y = y - target->y;
+                            drag_start_mx = x;
+                            drag_start_my = y;
+                            is_drag_active = false;
                             window_bring_to_front(target);
                         } else {
                             window_bring_to_front(target);
-                        }
-                    }
-                } else {
-                    int new_x = x - drag_off_x;
-                    int new_y = y - drag_off_y;
-                    if (drag_window->x != new_x || drag_window->y != new_y) {
-                        window_invalidate_rect(root_window, drag_window->x, drag_window->y, drag_window->w, drag_window->h);
-                        drag_window->x = new_x;
-                        drag_window->y = new_y;
-                        window_invalidate_rect(root_window, drag_window->x, drag_window->y, drag_window->w, drag_window->h);
-                        if (!drag_window->is_maximized && !drag_window->is_minimized) {
-                            window_save_normal_bounds(
-                                drag_window, drag_window->x, drag_window->y, drag_window->w, drag_window->h);
                         }
                     }
                 }
@@ -173,22 +162,58 @@ void window_manager_handler(void) {
                 if (!drag_window) {
 
                 } else {
-                    int new_x = x - drag_off_x;
-                    int new_y = y - drag_off_y;
-                    if (drag_window->x != new_x || drag_window->y != new_y) {
-                        window_invalidate_rect(root_window, drag_window->x, drag_window->y, drag_window->w, drag_window->h);
-                        drag_window->x = new_x;
-                        drag_window->y = new_y;
-                        window_invalidate_rect(root_window, drag_window->x, drag_window->y, drag_window->w, drag_window->h);
-                        if (!drag_window->is_maximized && !drag_window->is_minimized) {
-                            window_save_normal_bounds(
-                                drag_window, drag_window->x, drag_window->y, drag_window->w, drag_window->h);
+                    if (!is_drag_active) {
+                        int dx = x - drag_start_mx;
+                        int dy = y - drag_start_my;
+                        if (dx < 0) dx = -dx;
+                        if (dy < 0) dy = -dy;
+
+                        if (dx < DRAG_THRESHOLD && dy < DRAG_THRESHOLD) {
+
+                        } else {
+                            is_drag_active = true;
+                        }
+                    }
+
+                    if (is_drag_active) {
+                        if (drag_window->is_maximized) {
+                            float ratio = (float)(x - drag_window->x) / (float)drag_window->w;
+
+                            window_toggle_maximize(drag_window);
+
+                            int new_w = drag_window->w;
+                            drag_window->x = x - (int)(new_w * ratio);
+
+                            drag_window->y = y - (WIN_TITLE_HEIGHT / 2);
+
+                            drag_off_x = x - drag_window->x;
+                            drag_off_y = y - drag_window->y;
+
+                            window_invalidate_rect(root_window, 0, 0, root_window->w, root_window->h);
+                        }
+                        int new_x = x - drag_off_x;
+                        int new_y = y - drag_off_y;
+                        if (drag_window->x != new_x || drag_window->y != new_y) {
+                            window_invalidate_rect(root_window, drag_window->x, drag_window->y, drag_window->w, drag_window->h);
+                            drag_window->x = new_x;
+                            drag_window->y = new_y;
+                            window_invalidate_rect(root_window, drag_window->x, drag_window->y, drag_window->w, drag_window->h);
+
+                            window_invalidate_rect(root_window, g_mouse_last_x, g_mouse_last_y, 32, 32);
+                            window_invalidate_rect(root_window, x, y, 32, 32);
                         }
                     }
                 }
             } else {
-                if (drag_window) drag_window = NULL;
+                if (drag_window) {
+                    if (!drag_window->is_maximized && !drag_window->is_minimized) {
+                        window_save_normal_bounds(
+                            drag_window, drag_window->x, drag_window->y, drag_window->w, drag_window->h);
+                    }
+                    drag_window = NULL;
+                }
                 g_handled = false;
+                is_drag_active = false;
             }
 
             g_mouse_last_x = x;
@@ -201,10 +226,6 @@ void window_manager_handler(void) {
                 window_manager_refresh();
                 last_refresh_tick = current_tick;
             }
-        }
-
-        if (need_render_cursor) {
-            graphics_cursor_render();
         }
 
         yield();
