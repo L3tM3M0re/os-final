@@ -24,13 +24,14 @@ enum {
     NR_createdir,
     NR_deletedir,
     NR_wait,
+    NR_exit,
     NR_killerabbit,
     NR_environ,
     NR_krnlobj_request,
-    NR_exit,
+    NR_sendrec,
 
     //! total syscalls
-    NR_SYSCALLS = NR_exit + 1,
+    NR_SYSCALLS = NR_sendrec + 1,
 };
 
 //! from exec.c
@@ -79,3 +80,6 @@ bool do_environ(int op, char *const **p_envp);
 
 //! from sync.c
 int do_krnlobj_request(int req, void *arg);
+
+//! from ipc.c
+int do_sendrec(int function, int src_dest, void* m);

@@ -6,6 +6,7 @@
 #include <unios/memory.h>
 #include <unios/regs.h>
 #include <unios/sync.h>
+#include <unios/ipc.h>
 #include <sys/types.h>
 #include <stdint.h>
 
@@ -66,6 +67,8 @@ enum process_stat {
     ZOMBIE,    //<! exit and become a zombie proc, wait for recycle
     KILLING,   //<! being killed
     PREINITED, //<! already inited and wait to be a ready one
+    SENDING,   //<! 正在等待发送 (阻塞)
+    RECEIVING  //<! 正在等待接收 (阻塞)
 };
 
 #define NR_CHILD_MAX (NR_PCBS - NR_K_PCBS - 1)
@@ -132,6 +135,8 @@ typedef struct lin_memmap_s {
     uint32_t stack_child_limit;
 } lin_memmap_t;
 
+struct pcb_s;
+
 typedef struct pcb_s {
     //! WARNING: offset 0 is reserved for user context regs
     stack_frame_t regs;
@@ -164,6 +169,15 @@ typedef struct pcb_s {
     file_desc_t* filp[NR_FILES];
     uint32_t     lock;
     uint32_t     exit_code;
+
+    int p_flags;              // 进程标志位 (保留扩展用)
+    message_t *p_msg;         // 指向该进程当前正在处理的消息的指针
+    int p_recvfrom;
+    int p_sendto;
+    int has_int_msg;          // 是否有待处理的中断消息
+
+    struct pcb_s *q_sending;  // 等待给我发消息的进程队列头
+    struct pcb_s *next_sending; // 发送队列的下一个节点
 } pcb_t;
 
 typedef union {

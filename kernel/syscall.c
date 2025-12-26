@@ -1,6 +1,7 @@
 ﻿#include <unios/syscall.h>
 #include <unios/assert.h>
 #include <unios/proc.h>
+#include <unios/ipc.h>
 #include <arch/x86.h>
 #include <sys/types.h>
 #include <stdint.h>
@@ -155,6 +156,10 @@ static uint32_t sys_krnlobj_request() {
     return do_krnlobj_request(SYSCALL_ARGS2(int, void *));
 }
 
+static uint32_t sys_sendrec() {
+    return do_sendrec(SYSCALL_ARGS3(int, int, message_t*));
+}
+
 syscall_t syscall_table[NR_SYSCALLS] = {
     SYSCALL_ENTRY(get_ticks),
     SYSCALL_ENTRY(get_pid),
@@ -181,4 +186,5 @@ syscall_t syscall_table[NR_SYSCALLS] = {
     SYSCALL_ENTRY(killerabbit),
     SYSCALL_ENTRY(environ),
     SYSCALL_ENTRY(krnlobj_request),
+    SYSCALL_ENTRY(sendrec),
 };

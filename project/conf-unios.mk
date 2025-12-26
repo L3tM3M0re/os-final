@@ -86,6 +86,7 @@ INCDIRS  += include
 INCDIRS  += include/kernel
 INCDIRS  += include/lib
 INCDIRS  += include/deps
+INCDIRS  += include/user
 LINKDIRS ?=
 LINKDIRS += $(OBJDIR)lib
 include $(PROJMK_PREFIX)conf-toolchain.mk
