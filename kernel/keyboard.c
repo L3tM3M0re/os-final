@@ -145,7 +145,21 @@ void mouse_handler(int irq) {
 
     mouse_in.buf[mouse_in.count++] = scan_code;
 
+    //! keep sync: first byte must have bit3 set
+    if (mouse_in.count == 1 && (mouse_in.buf[0] & 0x08) == 0) {
+        mouse_in.count = 0;
+        release(&mouse_in.lock);
+        return;
+    }
+
     if (mouse_in.count != 3) {
+        release(&mouse_in.lock);
+        return;
+    }
+
+    //! overflow bits set -> discard packet to avoid jump
+    if (mouse_in.buf[0] & 0xC0) {
+        mouse_in.count = 0;
         release(&mouse_in.lock);
         return;
     }
