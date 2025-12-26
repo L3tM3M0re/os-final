@@ -138,8 +138,6 @@ void init_handle_new_tty() {
 
     tty_notify_shell();
     release(&lock);
-
-    printf("[TTY #%d]\n", nr_tty);
     exec("shell_0");
     unreachable();
 }
