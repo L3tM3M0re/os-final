@@ -12,6 +12,7 @@
 #include <unios/tracing.h>
 #include <unios/assert.h>
 #include <unios/window.h>
+#include <unios/font.h>
 
 extern void init();
 
@@ -27,11 +28,14 @@ void kernel_main() {
     init_memory();
     kinfo("init memory done");
 
+    font_init();
+    kinfo("init font done");
+
     graphics_boot_demo();
 
     init_window_manager();
 
-    window_t* win1 = create_window(50, 50, 200, 150, "Win1", 0xFFFF0000); // 红
+    window_t* win1 = create_window(50, 50, 200, 150, "Win1中文测试fgewwaaaaaaaaaaaaaaaa", 0xFFFF0000); // 红
     window_t* win2 = create_window(150, 100, 200, 150, "Win2", 0xFF00FF00); // 绿 (应该盖住红的一部分)
     window_t* win3 = create_window(400, 300, 100, 100, "Win3", 0xFF0000FF); // 蓝
 

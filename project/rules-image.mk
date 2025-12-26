@@ -1,5 +1,6 @@
 MOUNT_POINT  := $(OBJDIR)iso
 RAW_HD_IMAGE := hd/test1.img
+FONT_FILE    := art_resource/unifont.bin
 
 $(IMAGE_FILE)p0: $(RAW_HD_IMAGE) $(MBR_FILE) $(BOOT_FILE)
 	@$(call begin-job,pre-build image,)
@@ -34,12 +35,12 @@ $(IMAGE_FILE)p1: $(IMAGE_FILE)p0 $(LOADER_FILE) $(KERNEL_FILE)
 	@cp -f $< $@
 	@mkdir -p $(MOUNT_POINT)
 	@\
-	loop_device=`losetup -f`;                       \
-	sudo losetup -P $${loop_device} $@;             \
-	sudo mount $${loop_device}p1 $(MOUNT_POINT);    \
-	sudo cp $(LOADER_FILE) $(MOUNT_POINT)/;         \
-	sudo cp $(KERNEL_FILE) $(MOUNT_POINT)/;         \
-	sudo umount $(MOUNT_POINT);                     \
+	loop_device=`losetup -f`;                         \
+	sudo losetup -P $${loop_device} $@;               \
+	sudo mount $${loop_device}p1 $(MOUNT_POINT);      \
+	sudo cp $(LOADER_FILE) $(MOUNT_POINT)/;           \
+	sudo cp $(KERNEL_FILE) $(MOUNT_POINT)/;           \
+	sudo umount $(MOUNT_POINT);                       \
 	sudo losetup -d $${loop_device}
 	@rm -rf $(MOUNT_POINT)
 	@$(call end-job,done,install bootloader & kernel -> $(notdir $@),)
@@ -51,6 +52,11 @@ $(IMAGE_FILE)p2: $(IMAGE_FILE)p1 $(USER_TAR_FILE)
 	@dd if=$(USER_TAR_FILE) of=$@ bs=512                        \
 		count=$(INSTALL_NR_SECTORS) seek=$(INSTALL_PHY_SECTOR)  \
 		conv=notrunc > /dev/null 2>&1
+
+	@dd if=$(FONT_FILE) of=$@ bs=512                            \
+		seek=54000                                              \
+		conv=notrunc > /dev/null 2>&1
+
 	@$(call end-job,done,install user programs -> $(notdir $@),)
 
 $(IMAGE_FILE)p3: $(IMAGE_FILE)p2 $(ORANGE_FS_FLAG_FILE)

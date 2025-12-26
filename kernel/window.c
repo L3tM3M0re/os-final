@@ -384,7 +384,12 @@ void window_draw_decoration(window_t* win) {
     };
     graphics_fill_rect(&win->surface, close_rect, C_CLOSE_BTN);
 
-    // TODO: 绘制标题文本, 需要实现文字渲染功能
+    int text_x = 6;
+    int text_y = (WIN_TITLE_HEIGHT - 16) / 2 + 1;
+
+    if (win->title[0] != '\0') {
+        graphics_draw_text(&win->surface, text_x, text_y, win->title, 0xFFFFFFFF);
+    }
 }
 
 void window_manager_on_mouse(int x, int y, int buttons) {
