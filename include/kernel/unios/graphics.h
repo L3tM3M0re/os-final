@@ -5,13 +5,13 @@
 #include <stddef.h> // IWYU pragma: keep
 
 typedef struct graphics_mode_s {
-    uint16_t width;
-    uint16_t height;
-    uint16_t bpp;
-    uint32_t pitch;
+    uint16_t  width;
+    uint16_t  height;
+    uint16_t  bpp;
+    uint32_t  pitch;
     uintptr_t lfb_phy;
-    void *lfb_lin;
-    size_t lfb_size;
+    void     *lfb_lin;
+    size_t    lfb_size;
 } graphics_mode_t;
 
 typedef struct graphics_rect_s {
@@ -26,9 +26,9 @@ typedef struct graphics_surface_s {
     uint16_t height;
     uint16_t bpp;
     uint32_t pitch;
-    void *pixels;
-    size_t size;
-    bool owns;
+    void    *pixels;
+    size_t   size;
+    bool     owns;
 } graphics_surface_t;
 
 /*!
@@ -39,15 +39,19 @@ typedef struct graphics_surface_s {
  * \param src 源 Surface
  * \param src_area 源区域 (NULL 表示拷贝整个源 Surface)
  */
-void graphics_blit(graphics_surface_t *dst, int dx, int dy,
-                   const graphics_surface_t *src, const graphics_rect_t *src_area);
+void graphics_blit(
+    graphics_surface_t       *dst,
+    int                       dx,
+    int                       dy,
+    const graphics_surface_t *src,
+    const graphics_rect_t    *src_area);
 /*!
  * \brief 将 LFB (线性帧缓冲区) 映射到指定进程的页表中
  *
  * \param cr3 目标进程页目录的物理地址 (CR3 寄存器值)
  *
- * \note 此函数用于确保在不同进程上下文（如中断处理）中也能访问显存，防止 Page Fault
- */
+ * \note 此函数用于确保在不同进程上下文（如中断处理）中也能访问显存，防止 Page
+Fault  */
 void graphics_map_lfb(uint32_t cr3);
 /*!
  * \brief 初始化 bochs VBE LFB 并绘制简单测试图案
@@ -116,25 +120,24 @@ void graphics_get_cursor_pos(int *x, int *y);
  * \brief 将光标绘制到指定 surface 上
  */
 void graphics_cursor_draw_to(graphics_surface_t *dst, int x, int y);
-/*!
- * \brief 存储当前光标位置
- */
-void graphics_cursor_store_prev();
-/*!
- * \brief 恢复移动前光标位置
- */
-void graphics_cursor_restore_prev();
 
 void graphics_lock(void);
 void graphics_unlock(void);
 
-void graphics_set_clip_rect(int x, int y, int w, int h);
+void            graphics_set_clip_rect(int x, int y, int w, int h);
 graphics_rect_t graphics_get_clip_rect();
 
-void graphics_draw_text(graphics_surface_t *dst, int x, int y, const char *text, uint32_t color);
-void graphics_draw_hollow_rect(graphics_surface_t *dst, int x, int y, int w, int h, uint32_t color);
-void graphics_draw_glyph(graphics_surface_t *dst, int x, int y, const uint8_t *bitmap, uint32_t color);
+void graphics_draw_text(
+    graphics_surface_t *dst, int x, int y, const char *text, uint32_t color);
+void graphics_draw_hollow_rect(
+    graphics_surface_t *dst, int x, int y, int w, int h, uint32_t color);
+void graphics_draw_glyph(
+    graphics_surface_t *dst,
+    int                 x,
+    int                 y,
+    const uint8_t      *bitmap,
+    uint32_t            color);
 
 /* Syscall */
 
-bool do_fill_rect(int x, int y, int w, int h, uint32_t color);          //< 纯色矩形填充
+bool do_fill_rect(int x, int y, int w, int h, uint32_t color); //< 纯色矩形填充

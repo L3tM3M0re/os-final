@@ -218,6 +218,8 @@ void graphics_blit(
         eff_y  = 0;
     }
 
+    if (eff_w <= 0 || eff_h <= 0) { return; }
+
     graphics_rect_t d_rect = {eff_x, eff_y, eff_w, eff_h};
 
     graphics_rect_t dst_bounds = {0, 0, dst->width, dst->height};
@@ -226,19 +228,35 @@ void graphics_blit(
         if (!intersect_rect(&d_rect, &g_clip_rect)) return;
     }
 
-    int delta_x = d_rect.x - dx;
-    int delta_y = d_rect.y - dy;
+    eff_x = d_rect.x;
+    eff_y = d_rect.y;
+    eff_w = d_rect.w;
+    eff_h = d_rect.h;
 
-    s_x += delta_x;
-    s_y += delta_y;
+    int delta_x  = eff_x - dx;
+    int delta_y  = eff_y - dy;
+    s_x         += delta_x;
+    s_y         += delta_y;
 
-    if (s_x < 0) s_x = 0;
-    if (s_y < 0) s_y = 0;
+    if (s_x < 0) {
+        eff_x -= s_x;
+        eff_w += s_x;
+        s_x    = 0;
+    }
+    if (s_y < 0) {
+        eff_y -= s_y;
+        eff_h += s_y;
+        s_y    = 0;
+    }
 
-    if (s_x + d_rect.w > src->width) d_rect.w = src->width - s_x;
-    if (s_y + d_rect.h > src->height) d_rect.h = src->height - s_y;
+    if (eff_w <= 0 || eff_h <= 0) { return; }
 
-    if (d_rect.w <= 0 || d_rect.h <= 0) { return; }
+    if (s_x + eff_w > src->width) eff_w = (int)src->width - s_x;
+    if (s_y + eff_h > src->height) eff_h = (int)src->height - s_y;
+
+    if (eff_w <= 0 || eff_h <= 0) { return; }
+
+    d_rect = (graphics_rect_t){eff_x, eff_y, eff_w, eff_h};
 
     // 执行内存拷贝
     uint32_t bpp_stride = src->bpp / 8;
@@ -351,34 +369,111 @@ static void cursor_build_bitmap() {
     g_cursor_sprite.owns   = false;
 }
 
-void graphics_cursor_restore_prev() {
-    if (!g_ready) return;
-    if (!g_cursor.drawn) { return; }
+static void _save_cursor_bg(int x, int y) {
+    if (!g_front.pixels) return;
 
-    graphics_rect_t rect = {
-        (uint16_t)g_cursor.prev_x,
-        (uint16_t)g_cursor.prev_y,
-        g_cursor_sprite.width,
-        g_cursor_sprite.height,
-    };
-    graphics_blit(&g_front, rect.x, rect.y, &g_back, &rect);
+    int w = g_cursor_sprite.width;
+    int h = g_cursor_sprite.height;
+
+    // 计算裁剪区域
+    int eff_x = x;
+    int eff_y = y;
+    int eff_w = w;
+    int eff_h = h;
+
+    if (eff_x < 0) {
+        eff_w += eff_x;
+        eff_x  = 0;
+    }
+    if (eff_y < 0) {
+        eff_h += eff_y;
+        eff_y  = 0;
+    }
+    if (eff_x + eff_w > g_front.width) eff_w = g_front.width - eff_x;
+    if (eff_y + eff_h > g_front.height) eff_h = g_front.height - eff_y;
+
+    if (eff_w <= 0 || eff_h <= 0) return;
+
+    // 从显存 (LFB) 读取像素到 g_cursor_bg_backup
+    uint32_t *src_pixels = (uint32_t *)g_front.pixels;
+    int       src_pitch  = g_front.pitch / 4;
+
+    for (int i = 0; i < eff_h; ++i) {
+        uint32_t *src_row = src_pixels + (eff_y + i) * src_pitch + eff_x;
+        // 计算在 backup 数组中的偏移 (对应 sprite 的局部坐标)
+        int local_y = eff_y - y;
+        int local_x = eff_x - x;
+        memcpy(
+            &g_cursor_bg_backup[(local_y + i) * w + local_x],
+            src_row,
+            eff_w * 4);
+    }
 }
 
-void graphics_cursor_store_prev() {
-    if (!g_ready) return;
+static void _restore_cursor_bg(int x, int y) {
+    if (!g_front.pixels) return;
+
+    int w = g_cursor_sprite.width;
+    int h = g_cursor_sprite.height;
+
+    int eff_x = x;
+    int eff_y = y;
+    int eff_w = w;
+    int eff_h = h;
+
+    if (eff_x < 0) {
+        eff_w += eff_x;
+        eff_x  = 0;
+    }
+    if (eff_y < 0) {
+        eff_h += eff_y;
+        eff_y  = 0;
+    }
+    if (eff_x + eff_w > g_front.width) eff_w = g_front.width - eff_x;
+    if (eff_y + eff_h > g_front.height) eff_h = g_front.height - eff_y;
+
+    if (eff_w <= 0 || eff_h <= 0) return;
+
+    // 将 g_cursor_bg_backup 写回显存 (LFB)
+    uint32_t *dst_pixels = (uint32_t *)g_front.pixels;
+    int       dst_pitch  = g_front.pitch / 4;
+
+    for (int i = 0; i < eff_h; ++i) {
+        uint32_t *dst_row = dst_pixels + (eff_y + i) * dst_pitch + eff_x;
+        int       local_y = eff_y - y;
+        int       local_x = eff_x - x;
+        memcpy(
+            dst_row,
+            &g_cursor_bg_backup[(local_y + i) * w + local_x],
+            eff_w * 4);
+    }
+}
+
+void graphics_cursor_render(void) {
+    if (!g_ready || !g_cursor.ready) { return; }
+
+    if (g_graphics_lock) { return; }
+
+    if (g_cursor.x == g_cursor.prev_x && g_cursor.y == g_cursor.prev_y
+        && g_cursor.drawn) {
+        return;
+    }
+
+    graphics_lock();
+
+    if (g_cursor.drawn) {
+        _restore_cursor_bg(g_cursor.prev_x, g_cursor.prev_y);
+    }
+
+    _save_cursor_bg(g_cursor.x, g_cursor.y);
+
+    graphics_cursor_draw_to(&g_front, g_cursor.x, g_cursor.y);
 
     g_cursor.drawn  = true;
     g_cursor.prev_x = g_cursor.x;
     g_cursor.prev_y = g_cursor.y;
-}
 
-static void cursor_redraw() {
-    if (!g_cursor.ready) return;
-
-    graphics_cursor_restore_prev();
-    graphics_cursor_draw_to(&g_front, g_cursor.x, g_cursor.y);
-
-    graphics_cursor_store_prev();
+    graphics_unlock();
 }
 
 void graphics_map_lfb(uint32_t cr3) {
@@ -400,32 +495,19 @@ void graphics_map_lfb(uint32_t cr3) {
 
 void graphics_cursor_set(int x, int y) {
     if (!g_ready) { return; }
-    g_cursor.x = x;
-    g_cursor.y = y;
+
+    int max_x = (int)g_front.width - 1;
+    int max_y = (int)g_front.height - 1;
+
+    g_cursor.x = clamp_int(x, 0, max_x);
+    g_cursor.y = clamp_int(y, 0, max_y);
 }
 
 void graphics_cursor_move(int dx, int dy) {
     if (!g_ready) { return; }
-
     int new_x = g_cursor.x + dx;
     int new_y = g_cursor.y + dy;
-    int max_x = (int)g_front.width - 1;
-    int max_y = (int)g_front.height - 1;
-
-    g_cursor.x = clamp_int(new_x, 0, max_x);
-    g_cursor.y = clamp_int(new_y, 0, max_y);
-}
-
-void graphics_cursor_render(void) {
-    if (!g_ready || !g_cursor.ready) { return; }
-
-    if (g_graphics_lock) { return; }
-
-    if (g_cursor.x == g_cursor.prev_x && g_cursor.y == g_cursor.prev_y) {
-        return;
-    }
-
-    cursor_redraw();
+    graphics_cursor_set(new_x, new_y);
 }
 
 void graphics_cursor_init(void) {
@@ -437,7 +519,7 @@ void graphics_cursor_init(void) {
     g_cursor.x      = g_front.width / 2;
     g_cursor.y      = g_front.height / 2;
     g_cursor.prev_x = g_cursor.prev_y = 0;
-    cursor_redraw();
+    graphics_cursor_render();
 }
 
 void graphics_get_cursor_pos(int *x, int *y) {
@@ -480,66 +562,14 @@ graphics_surface_t *graphics_backbuffer(void) {
     return g_ready ? &g_back : NULL;
 }
 
-static void _save_cursor_bg(int x, int y) {
-    if (!g_back.pixels) return;
-    int w = g_cursor_sprite.width;
-    int h = g_cursor_sprite.height;
-
-    int bx = x, by = y, bw = w, bh = h;
-    if (bx < 0) {
-        bw += bx;
-        bx  = 0;
-    }
-    if (by < 0) {
-        bh += by;
-        by  = 0;
-    }
-    if (bx + bw > g_back.width) bw = g_back.width - bx;
-    if (by + bh > g_back.height) bh = g_back.height - by;
-    if (bw <= 0 || bh <= 0) return;
-
-    uint32_t *src   = (uint32_t *)g_back.pixels;
-    int       pitch = g_back.pitch / 4;
-    for (int i = 0; i < bh; ++i) {
-        memcpy(&g_cursor_bg_backup[i * w], &src[(by + i) * pitch + bx], bw * 4);
-    }
-}
-
-static void _restore_cursor_bg(int x, int y) {
-    if (!g_back.pixels) return;
-    int w = g_cursor_sprite.width;
-    int h = g_cursor_sprite.height;
-
-    int bx = x, by = y, bw = w, bh = h;
-    if (bx < 0) {
-        bw += bx;
-        bx  = 0;
-    }
-    if (by < 0) {
-        bh += by;
-        by  = 0;
-    }
-    if (bx + bw > g_back.width) bw = g_back.width - bx;
-    if (by + bh > g_back.height) bh = g_back.height - by;
-    if (bw <= 0 || bh <= 0) return;
-
-    uint32_t *dst   = (uint32_t *)g_back.pixels;
-    int       pitch = g_back.pitch / 4;
-    for (int i = 0; i < bh; ++i) {
-        memcpy(&dst[(by + i) * pitch + bx], &g_cursor_bg_backup[i * w], bw * 4);
-    }
-}
-
 bool graphics_present(const graphics_rect_t *rects, size_t count) {
     if (g_front.pixels == NULL || g_back.pixels == NULL) { return false; }
 
-    bool cursor_active = g_cursor.ready;
-    int  cx            = g_cursor.x;
-    int  cy            = g_cursor.y;
+    graphics_lock();
 
-    if (cursor_active) {
-        _save_cursor_bg(cx, cy);
-        graphics_cursor_draw_to(&g_back, cx, cy);
+    if (g_cursor.drawn) {
+        _restore_cursor_bg(g_cursor.prev_x, g_cursor.prev_y);
+        g_cursor.drawn = false;
     }
 
     if (rects == NULL || count == 0) {
@@ -550,15 +580,15 @@ bool graphics_present(const graphics_rect_t *rects, size_t count) {
         }
     }
 
-    if (cursor_active) {
-        _restore_cursor_bg(cx, cy);
+    if (g_cursor.ready) {
+        _save_cursor_bg(g_cursor.x, g_cursor.y);
+        graphics_cursor_draw_to(&g_front, g_cursor.x, g_cursor.y);
         g_cursor.drawn  = true;
-        g_cursor.prev_x = cx;
-        g_cursor.prev_y = cy;
+        g_cursor.prev_x = g_cursor.x;
+        g_cursor.prev_y = g_cursor.y;
     }
 
-    if (g_cursor.x != cx || g_cursor.y != cy) { graphics_cursor_render(); }
-
+    graphics_unlock();
     return true;
 }
 

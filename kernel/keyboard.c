@@ -71,7 +71,7 @@ static void set_mouse_leds() {
 
     // 设置采样率为 240Hz
     mouse_write(0xF3); // 命令: 设置采样率
-    mouse_write(240);
+    mouse_write(120);
 
     // 设置分辨率为 8 counts/mm (最大值)
     mouse_write(0xE8); // 命令: 设置分辨率

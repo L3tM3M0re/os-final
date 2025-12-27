@@ -20,6 +20,8 @@
 #define DISABLE_INTERRUPTS() __asm__ volatile("cli")
 #define ENABLE_INTERRUPTS()  __asm__ volatile("sti")
 
+#define MOUSE_IPC_INTERVAL 8
+
 #define COLOR_BACK 0xFF336699
 
 static window_t* handle_table[WIN_MAX_WINDOWS]; // 句柄表
@@ -64,6 +66,14 @@ static inline int clamp_int(int val, int min_v, int max_v) {
     if (val < min_v) { return min_v; }
     if (val > max_v) { return max_v; }
     return val;
+}
+
+void window_lock() {
+    DISABLE_INTERRUPTS();
+}
+
+void window_unlock() {
+    ENABLE_INTERRUPTS();
 }
 
 static bool check_window_handle(window_t* win, int handle) {
@@ -151,7 +161,6 @@ void window_invalidate_rect(window_t* win, int x, int y, int w, int h) {
     if (fix_w <= 0 || fix_h <= 0) return;
 
     graphics_rect_t new_rect = {abs_x, abs_y, fix_w, fix_h};
-
     // 合并到全局脏区域
     if (!g_has_dirty) {
         g_dirty_rect = new_rect;
@@ -162,40 +171,20 @@ void window_invalidate_rect(window_t* win, int x, int y, int w, int h) {
 }
 
 void window_manager_handler(void) {
-    int last_refresh_tick = 0;
+    int  last_refresh_tick   = 0;
+    int  last_mouse_ipc_tick = 0;
+    int  last_sent_buttons   = 0;
+    int  pending_mx = 0, pending_my = 0, pending_btns = 0;
+    int  current_tick      = 0;
+    bool has_pending_mouse = false;
+
     while (true) {
-        if (g_mouse_event_pending) {
-            DISABLE_INTERRUPTS();
-            int x                 = g_cmd_x;
-            int y                 = g_cmd_y;
-            int buttons           = g_cmd_buttons;
-            g_mouse_event_pending = false;
-            ENABLE_INTERRUPTS();
-            window_t* target_win = window_from_point(x, y);
-            if (target_win != NULL) {
-                int local_x = x - target_win->x;
-                int local_y = y - target_win->y;
-                if (target_win->owner_pid != -1) {
-                    message_t msg;
-                    memset(&msg, 0, sizeof(message_t));
-                    msg.type = MSG_GUI_MOUSE_EVENT;
-                    msg.u1   = local_x; // x 坐标
-                    msg.u2   = local_y; // y 坐标
-                    msg.u3   = buttons; // 按键状态
-                    sendrec(SEND, target_win->owner_pid, &msg);
-                }
-
-                if (buttons & MOUSE_LEFT_BUTTON) {
-                    window_bring_to_front(target_win);
-                }
-            }
-        }
-
+        current_tick = system_ticks;
         if (g_key_event_pending) {
-            DISABLE_INTERRUPTS();
+            window_lock();
             uint32_t key        = g_key_pressed;
             g_key_event_pending = false;
-            ENABLE_INTERRUPTS();
+            window_unlock();
 
             // 获取当前聚焦的窗口
             // 简单起见，这里假设你有一个 focused_window 变量，
@@ -223,9 +212,40 @@ void window_manager_handler(void) {
             }
         }
 
+        if (g_mouse_event_pending) {
+            window_lock();
+            pending_mx            = g_cmd_x;
+            pending_my            = g_cmd_y;
+            pending_btns          = g_cmd_buttons;
+            g_mouse_event_pending = false;
+            window_unlock();
+
+            has_pending_mouse = true;
+        }
+
+        if (has_pending_mouse) {
+            if (current_tick - last_mouse_ipc_tick >= MOUSE_IPC_INTERVAL
+                || pending_btns != last_sent_buttons) {
+                window_t* target_win =
+                    window_from_point(pending_mx, pending_my);
+                if (target_win != NULL && target_win->owner_pid != -1) {
+                    message_t msg;
+                    memset(&msg, 0, sizeof(message_t));
+                    msg.type = MSG_GUI_MOUSE_EVENT;
+                    msg.u1   = pending_mx - target_win->x;
+                    msg.u2   = pending_my - target_win->y;
+                    msg.u3   = pending_btns;
+
+                    sendrec(SEND, target_win->owner_pid, &msg);
+                }
+                last_mouse_ipc_tick = current_tick;
+                last_sent_buttons   = pending_btns;
+                has_pending_mouse   = false;
+            }
+        }
+
         if (g_has_dirty) {
-            int current_tick = system_ticks;
-            if (current_tick - last_refresh_tick >= 10) {
+            if (current_tick - last_refresh_tick >= 16) {
                 window_manager_refresh();
                 last_refresh_tick = current_tick;
             }
@@ -255,8 +275,10 @@ void init_window_manager() {
 
     root_window->owner_pid = -1;
 
+    window_lock();
     INIT_LIST_HEAD(&root_window->children);
     INIT_LIST_HEAD(&root_window->sibling);
+    window_unlock();
 
     window_fill(root_window, 0xFFFFFF);
     window_mark_dirty();
@@ -287,8 +309,10 @@ window_t* create_window(int x, int y, int w, int h, int owner) {
 
     win->owner_pid = owner;
 
+    window_lock();
     INIT_LIST_HEAD(&win->children);
     INIT_LIST_HEAD(&win->sibling);
+    window_unlock();
 
     // 初始化 Surface
     win->surface.width  = win->w;
@@ -301,7 +325,10 @@ window_t* create_window(int x, int y, int w, int h, int owner) {
 
     // 将新窗口加入到 root 的子窗口链表尾部
     win->parent = root_window;
+
+    window_lock();
     list_add_tail(&win->sibling, &root_window->children);
+    window_unlock();
 
     window_invalidate_rect(root_window, win->x, win->y, win->w, win->h);
 
@@ -312,7 +339,10 @@ bool destroy_window(window_t* win) {
     if (!win || win == root_window) { return false; }
     if (!try_destroy_window(win)) { return false; }
 
+    window_lock();
     list_del(&win->sibling);
+    window_unlock();
+
     window_invalidate_rect(root_window, win->x, win->y, win->w, win->h);
 
     // 释放资源
@@ -326,6 +356,8 @@ bool destroy_window(window_t* win) {
 
 bool window_move_abs(window_t* win, int x, int y) {
     if (!win || win == root_window) { return false; }
+
+    if (win->x == x && win->y == y) { return true; }
 
     window_invalidate_rect(root_window, win->x, win->y, win->w, win->h);
     win->x = x;
@@ -365,6 +397,7 @@ bool window_draw_recursive(
 
     // 绘制子窗口
     struct list_head* pos;
+
     list_for_each(pos, &win->children) {
         window_t* child = container_of(pos, window_t, sibling);
         if (!window_draw_recursive(dest, child, cur_x, cur_y)) { return false; }
@@ -377,24 +410,24 @@ void window_manager_refresh() {
     if (!g_has_dirty) return;
 
     graphics_rect_t dirty = g_dirty_rect;
+
     reset_dirty_rect();
 
     graphics_surface_t* back_buffer = graphics_backbuffer();
     if (!back_buffer || !root_window) return;
 
-    graphics_lock();
-
     graphics_set_clip_rect(dirty.x, dirty.y, dirty.w, dirty.h);
+
     graphics_fill_rect(back_buffer, dirty, COLOR_BACK);
 
     // 绘制窗口
+    window_lock();
     window_draw_recursive(back_buffer, root_window, 0, 0);
+    window_unlock();
 
     graphics_set_clip_rect(0, 0, back_buffer->width, back_buffer->height);
 
     graphics_present(&dirty, 1);
-
-    graphics_unlock();
 }
 
 window_t* window_from_point(int x, int y) {
@@ -402,6 +435,7 @@ window_t* window_from_point(int x, int y) {
 
     window_t* win;
 
+    window_lock();
     list_for_each_entry_reverse(win, &root_window->children, sibling) {
         // 检查窗口是否可见
         if (!(win->flags & WIN_FLAG_VISIBLE)) continue;
@@ -411,6 +445,7 @@ window_t* window_from_point(int x, int y) {
             return win;
         }
     }
+    window_unlock();
 
     return root_window;
 }
@@ -420,8 +455,13 @@ void window_bring_to_front(window_t* win) {
     if (win == root_window) { return; }
     struct list_head* head = &win->parent->children;
 
-    if (list_is_last(&win->sibling, head)) { return; }
+    window_lock();
+    if (list_is_last(&win->sibling, head)) {
+        window_unlock();
+        return;
+    }
     list_move_tail(&win->sibling, head);
+    window_unlock();
 
     window_invalidate_rect(root_window, win->x, win->y, win->w, win->h);
 }

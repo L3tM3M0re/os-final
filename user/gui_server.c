@@ -17,7 +17,6 @@
 
 int main() {
     int h_desktop = get_root_window_handle();
-
     if (h_desktop < 0) { return 0; }
 
     int pid = get_pid();
@@ -39,7 +38,19 @@ int main() {
         }
     }
     refresh_window(win1);
-    // printf("test\n");
+
+    int clock_pid = fork();
+    if (clock_pid == 0) {
+        // [子进程]
+        // 注意：你需要确认编译生成的 clock 可执行文件在文件系统中的绝对路径
+        // 假设你的构建系统把它放在了 /user/clock
+        execve("clock", NULL, NULL);
+
+        // 如果 exec 返回，说明出错了 (比如文件找不到)
+        printf("[GUI] Failed to start clock!\n");
+        exit(1);
+    }
+
     message_t msg;
     while (1) {
         int src = ANY;
@@ -48,21 +59,13 @@ int main() {
         if (ret == 0) {
             // --- 处理键盘消息 ---
             if (msg.type == MSG_GUI_KEY) {
-                uint32_t key = (uint32_t)msg.u1; // 从 u1 取出按键
-                // printf("[Debug] key: %d", key);
-                // 判断是否是向左键
-                // 注意：你需要确认 keyboard.h 中 LEFT 的具体数值
-                if (key == LEFT) {
-                    win_x -= 10; // 向左移动 10 像素
-
-                    // 调用系统调用移动窗口
-                    move_abs_window(win1, win_x, win_y);
-
-                    // 移动后通常不需要手动 refresh_window(win1)，
-                    // 因为 move_window 内核实现里应该会标记脏矩形并重绘。
-                    // 但为了保险，可以刷一下桌面（因为窗口移走后，原来的位置需要重绘）
-                    // refresh_window(h_desktop);
-                }
+                uint32_t key = (uint32_t)msg.u1;
+                if (key == LEFT) { win_x -= 10; }
+                if (key == RIGHT) { win_x += 10; }
+                if (key == UP) { win_y -= 10; }
+                if (key == DOWN) { win_y += 10; }
+                printf("[Debug] win_x: %d, win_y: %d", win_x, win_y);
+                move_abs_window(win1, win_x, win_y);
             }
 
             // ... (其他消息处理) ...

@@ -10,7 +10,7 @@
 
 static inline bool is_kernel_task(process_t* p) {
     int pid = proc2pid(p);
-    return pid < NR_TASKS;
+    return pid <= NR_TASKS;
 }
 
 static void copy_msg(
@@ -168,7 +168,7 @@ static int msg_receive(process_t* current, int src_pid, message_t* m) {
 
     disable_int();
 
-    // 1查发送队列中是否有匹配的进程
+    // 查发送队列中是否有匹配的进程
     if (current->pcb.q_sending) {
         process_t* p = (process_t*)current->pcb.q_sending;
         prev         = NULL;
