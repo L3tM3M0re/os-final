@@ -134,3 +134,7 @@ graphics_rect_t graphics_get_clip_rect();
 void graphics_draw_text(graphics_surface_t *dst, int x, int y, const char *text, uint32_t color);
 void graphics_draw_hollow_rect(graphics_surface_t *dst, int x, int y, int w, int h, uint32_t color);
 void graphics_draw_glyph(graphics_surface_t *dst, int x, int y, const uint8_t *bitmap, uint32_t color);
+
+/* Syscall */
+
+bool do_fill_rect(int x, int y, int w, int h, uint32_t color);          //< 纯色矩形填充

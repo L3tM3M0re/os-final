@@ -34,6 +34,10 @@ enum {
     NR_refresh_window,
     NR_refresh_all_window,
     NR_get_root_window_handle,
+    NR_set_window_surface_buffer,
+
+    NR_fill_rect,
+
     NR_sendrec,               //< 进程间通信 (IPC)
 
     //! total syscalls

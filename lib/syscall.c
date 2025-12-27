@@ -228,6 +228,13 @@ bool refresh_all_window() {
 int get_root_window_handle() {
     return syscall0(NR_get_root_window_handle);
 }
+bool set_window_surface_buffer(int handle, void **win_surface_buffer) {
+    return syscall2(NR_set_window_surface_buffer, handle, (uint32_t)win_surface_buffer);
+}
+
+bool fill_rect(int x, int y, int w, int h, uint32_t color) {
+    return syscall5(NR_fill_rect, x, y, w, h, color);
+}
 
 int sendrec(int function, int src_dest, message_t* m) {
     return syscall3(NR_sendrec, function, src_dest, (uint32_t)m);

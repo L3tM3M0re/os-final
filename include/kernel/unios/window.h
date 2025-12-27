@@ -30,6 +30,8 @@
 
 typedef struct window_s {
     int id;
+    int owner_pid;
+    int x, y, w, h;
 
     int x;
     int y;
@@ -44,6 +46,7 @@ typedef struct window_s {
 
     // 窗口内容缓冲
     graphics_surface_t surface;
+    void *user_surface_buffer;
 
     // 窗口层级树
     struct window_s *parent;
@@ -59,9 +62,6 @@ typedef struct window_s {
     bool has_restore_bounds;
     bool is_maximized;
     bool is_minimized;
-
-    // 暂时预留, 未来可以扩展为 onClick, onKey 等
-    void *user_data;
 
 } window_t;
 
@@ -136,5 +136,6 @@ int do_open_window(int x, int y, int w, int h, const char* title, uint32_t bg_co
 bool do_close_window(int handle);                                                       //< 关闭窗口
 bool do_refresh_window(int handle);                                                     //< 刷新指定窗口
 bool do_refresh_all_window();                                                           //< 刷新所有窗口
+bool do_set_window_surface_buffer(int handle, void **win_surface_buffer);               //< 设置窗口的用户内存映射
 
 #endif

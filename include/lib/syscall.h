@@ -53,6 +53,10 @@ int open_window(int x, int y, int w, int h, const char* title, uint32_t bg_color
 bool close_window(int handle);
 bool refresh_window(int handle);
 bool refresh_all_window();
+bool set_window_surface_buffer(int handle, void **win_surface_buffer);
+
+// --- 绘图 (Graphics) ---
+bool fill_rect(int x, int y, int w, int h, uint32_t color);
 
 // --- 进程间通信 (IPC) ---
 int sendrec(int function, int src_dest, message_t* m);

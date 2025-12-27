@@ -792,3 +792,25 @@ void graphics_draw_text(graphics_surface_t *dst, int x, int y, const char *text,
         p += bytes;
     }
 }
+
+
+/* Syscall */
+
+bool do_fill_rect(int x, int y, int w, int h, uint32_t color) {
+    graphics_surface_t *back_buffer = graphics_backbuffer();
+    if (!back_buffer) return false;
+
+    if (x < 0) {
+        w = max(0, w + x);
+        x = 0;
+    }
+    if (y < 0) {
+        h = max(0, h + y);
+        y = 0;
+    }
+
+    graphics_rect_t rect = {(uint16_t)x, (uint16_t)y, (uint16_t)w, (uint16_t)h};
+
+    graphics_fill_rect(back_buffer, rect, color);
+    return true;
+}

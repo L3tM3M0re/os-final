@@ -3,11 +3,15 @@
 #include <unios/memory.h>
 #include <unios/assert.h>
 #include <unios/tracing.h>
+#include <unios/proc.h>
+#include <unios/schedule.h>
+#include <unios/page.h>
 #include <lib/string.h>
 #include <lib/container_of.h>
 #include <unios/font.h>
 #include <stdlib.h>
 #include <stddef.h>
+#include <math.h>
 #include <arch/x86.h>
 
 #define DISABLE_INTERRUPTS() __asm__ volatile("cli")
@@ -78,14 +82,14 @@ static bool check_window_handle(window_t *win, int handle) {
     return true;
 }
 
-static bool set_window_by_handle(window_t *win, int handle) {
+static bool set_window_by_handle(int handle, window_t **win) {
     if (handle < 0 || handle >= WIN_MAX_WINDOWS) {
         return false;
     }
     if (!handle_table[handle] || handle_table[handle]->id != handle) {
         return false;
     }
-    win = handle_table[handle];
+    *win = handle_table[handle];
     return true;
 }
 
@@ -407,7 +411,7 @@ window_t* create_window(int x, int y, int w, int h, const char* title, uint32_t 
     win->surface.pitch = win->w * 4;
     win->surface.size = (size_t)win->w * win->h * 4;
     win->surface.owns = true;
-    win->surface.pixels = kmalloc(win->surface.size);
+    win->surface.pixels = kmalloc(win->surface.size + PAGE_SIZE);
 
     if (win->surface.pixels) {
         window_draw_decoration(win);
@@ -862,6 +866,7 @@ int do_get_root_window_handle() {
     }
     return id;
 }
+
 int do_open_window(int x, int y, int w, int h, const char* title, uint32_t bg_color) {
     window_t* win = create_window(x, y, w, h, title, bg_color);
     if (!win) {
@@ -874,19 +879,80 @@ int do_open_window(int x, int y, int w, int h, const char* title, uint32_t bg_co
     }
     return id;
 }
+
 bool do_close_window(int handle) {
     window_t *win;
-    if (!set_window_by_handle(win, handle)) { return false; }
+    if (!set_window_by_handle(handle, &win)) { return false; }
     destroy_window(win);
     return true;
 }
+
 bool do_refresh_window(int handle) {
     window_t *win;
-    if (!set_window_by_handle(win, handle)) { return false; }
+    if (!set_window_by_handle(handle, &win)) { return false; }
     window_refresh(win);
     return true;
 }
+
 bool do_refresh_all_window() {
     window_manager_refresh();
     return true;
+}
+
+bool do_set_window_surface_buffer(int handle, void **win_surface_buffer) {
+    window_t *win;
+    if (!set_window_by_handle(handle, &win)) {
+        return false;
+    }
+
+    // owner_pid 判断
+
+    if (win->user_surface_buffer != NULL) {
+        *win_surface_buffer = win->user_surface_buffer;
+        return true;
+    }
+
+    pcb_t *pcb = &p_proc_current->pcb;
+
+    uint32_t k_addr_raw = (uint32_t)win->surface.pixels;
+    uint32_t k_page_start = k_addr_raw & ~(PAGE_SIZE - 1);
+    uint32_t offset = k_addr_raw - k_page_start;
+
+    size_t total_size = win->surface.size + offset;
+    size_t pages = (total_size + PAGE_SIZE - 1) / PAGE_SIZE;
+
+    lock_or(&pcb->heap_lock, sched);
+
+    void *u_ptr_base = mballoc_alloc(pcb->allocator, pages * PAGE_SIZE);
+    release(&pcb->heap_lock);
+
+    if (u_ptr_base == NULL) return false;
+
+    uint32_t cr3 = pcb->cr3;
+
+    uint32_t flags = PG_P | PG_U | PG_RWX;
+
+    for (size_t i = 0; i < pages; ++i) {
+        uint32_t k_laddr = k_page_start + i * PAGE_SIZE;
+        uint32_t u_laddr = (uint32_t)u_ptr_base + i * PAGE_SIZE;
+
+        uint32_t phy_addr = pg_laddr_phyaddr(cr3, k_laddr);
+
+        if (!pg_map_laddr(cr3, u_laddr, phy_addr, flags, flags)) {
+            kerror("Failed to map window buffer page");
+            return false;
+        }
+    }
+
+    pg_refresh();
+
+    void *u_ptr_final = (void *)((uint32_t)u_ptr_base + offset);
+
+    win->user_surface_buffer = u_ptr_final;
+    *win_surface_buffer = u_ptr_final;
+    return true;
+}
+
+bool do_update_window_surface(int handle) {
+    return do_refresh_window(handle);
 }

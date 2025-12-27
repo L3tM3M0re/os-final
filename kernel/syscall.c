@@ -182,6 +182,14 @@ static uint32_t sys_sendrec() {
     return do_sendrec(SYSCALL_ARGS3(int, int, message_t*));
 }
 
+static uint32_t sys_fill_rect() {
+    return do_fill_rect(SYSCALL_ARGS5(int, int, int, int, uint32_t));
+}
+
+static uint32_t sys_set_window_surface_buffer() {
+    return do_set_window_surface_buffer(SYSCALL_ARGS2(int, void **));
+}
+
 syscall_t syscall_table[NR_SYSCALLS] = {
     SYSCALL_ENTRY(get_ticks),
     SYSCALL_ENTRY(get_pid),
@@ -213,5 +221,7 @@ syscall_t syscall_table[NR_SYSCALLS] = {
     SYSCALL_ENTRY(refresh_window),
     SYSCALL_ENTRY(refresh_all_window),
     SYSCALL_ENTRY(get_root_window_handle),
+    SYSCALL_ENTRY(set_window_surface_buffer),
+    SYSCALL_ENTRY(fill_rect),
     SYSCALL_ENTRY(sendrec),
 };

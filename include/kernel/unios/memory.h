@@ -4,6 +4,8 @@
 #include <stddef.h>
 #include <stdbool.h>
 
+#define PAGE_SIZE 4096
+
 typedef void *(*fn_malloc_t)(size_t);
 
 typedef struct memblk_s {
