@@ -20,12 +20,6 @@
     "[plaintext]": {
         "editor.wordWrap": "on"
     },
-    "[c]": {
-        "editor.defaultFormatter": "xaver.clang-format"
-    },
-    "[cpp]": {
-        "editor.defaultFormatter": "xaver.clang-format",
-    },
     "clangd.onConfigChanged": "restart",
     "clangd.restartAfterCrash": true,
     "clangd.arguments": [

@@ -1,4 +1,5 @@
 #include <unios/syscall.h>
+#include <unios/window.h>
 #include <unios/environ.h>
 #include <unios/sync.h>
 #include <sys/types.h>
@@ -83,7 +84,13 @@ static int syscall6(
         "int $0x80\n\t"
         "pop %%ebp\n\t"
         : "=a"(ret)
-        : "a"(NR_syscall), "b"(p1), "c"(p2), "d"(p3), "S"(p4), "D"(p5), "g"(p6) // "g" 让编译器决定 p6 放在哪（内存或寄存器），我们手动 move
+        : "a"(NR_syscall),
+          "b"(p1),
+          "c"(p2),
+          "d"(p3),
+          "S"(p4),
+          "D"(p5),
+          "g"(p6) // "g" 让编译器决定 p6 放在哪（内存或寄存器），我们手动 move
         : "cc", "memory");
     return ret;
 }
@@ -186,7 +193,7 @@ int create(const char *path) {
     return syscall1(NR_create, (uint32_t)path);
 }
 
-int delete(const char *path) {
+int delete (const char *path) {
     return syscall1(NR_delete, (uint32_t)path);
 }
 
@@ -213,29 +220,47 @@ char *const *getenv() {
     return envp;
 }
 
-int open_window(int x, int y, int w, int h, const char* title, uint32_t bg_color) {
-    return syscall6(NR_open_window, x, y, w, h, (uint32_t)title, bg_color);
-}
-bool close_window(int handle) {
-    return syscall1(NR_close_window, handle);
-}
-bool refresh_window(int handle) {
-    return syscall1(NR_refresh_window, handle);
-}
-bool refresh_all_window() {
-    return syscall0(NR_refresh_all_window);
-}
 int get_root_window_handle() {
     return syscall0(NR_get_root_window_handle);
 }
+
+bool set_root_window_owner(int handle) {
+    return syscall1(NR_set_root_window_owner, handle);
+}
+
+bool set_window_info(int handle, window_info_t *win_info) {
+    return syscall2(NR_set_window_info, handle, (uint32_t)win_info);
+}
+
 bool set_window_surface_buffer(int handle, void **win_surface_buffer) {
-    return syscall2(NR_set_window_surface_buffer, handle, (uint32_t)win_surface_buffer);
+    return syscall2(
+        NR_set_window_surface_buffer, handle, (uint32_t)win_surface_buffer);
+}
+
+int open_window(int x, int y, int w, int h) {
+    return syscall4(NR_open_window, x, y, w, h);
+}
+
+bool close_window(int handle) {
+    return syscall1(NR_close_window, handle);
+}
+
+bool refresh_window(int handle) {
+    return syscall1(NR_refresh_window, handle);
+}
+
+bool refresh_all_window() {
+    return syscall0(NR_refresh_window_manager);
+}
+
+bool move_abs_window(int handle, int x, int y) {
+    return syscall3(NR_move_abs_window, handle, x, y);
 }
 
 bool fill_rect(int x, int y, int w, int h, uint32_t color) {
     return syscall5(NR_fill_rect, x, y, w, h, color);
 }
 
-int sendrec(int function, int src_dest, message_t* m) {
+int sendrec(int function, int src_dest, message_t *m) {
     return syscall3(NR_sendrec, function, src_dest, (uint32_t)m);
 }

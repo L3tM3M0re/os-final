@@ -8,69 +8,44 @@
 
 #define WIN_MAX_WINDOWS 256
 
-#define WIN_TITLE_MAX 64
-#define WIN_TITLE_HEIGHT 24
-#define WIN_MIN_WIDTH 80
-#define WIN_MIN_HEIGHT (WIN_TITLE_HEIGHT + 20)
-#define WIN_MINIMIZED_HEIGHT (WIN_TITLE_HEIGHT + 4)
-
-#define C_BORDER_LIGHT  0xFFE0E0E0
-#define C_BORDER_DARK   0xFF404040
-#define C_TITLE_BG      0xFF000080
-#define C_TITLE_TEXT    0xFFFFFFFF
-#define C_CLOSE_BTN     0xFFFF0000
-#define C_MAX_BTN       0xFF00AA00
-#define C_MIN_BTN       0xFFCCCC00
-
 // 窗口状态标志位
-#define WIN_FLAG_VISIBLE    (1 << 0)
-#define WIN_FLAG_FOCUSED    (1 << 1)
-#define WIN_FLAG_DIRTY      (1 << 2) // 需要重绘
+#define WIN_FLAG_VISIBLE     (1 << 0)
+#define WIN_FLAG_FOCUSED     (1 << 1)
+#define WIN_FLAG_DIRTY       (1 << 2) // 需要重绘
 #define WIN_FLAG_TRANSPARENT (1 << 3) // 支持透明混合
+#define WIN_FLAG_MAXIMIZED   (1 << 4)
+#define WIN_FLAG_MINIMIZED   (1 << 5)
 
 typedef struct window_s {
     int id;
     int owner_pid;
+
     int x, y, w, h;
-
-    int x;
-    int y;
-    int w;
-    int h;
-
-    int restore_x;
-    int restore_y;
-    int restore_w;
-    int restore_h;
-    int restore_to_maximized;
 
     // 窗口内容缓冲
     graphics_surface_t surface;
-    void *user_surface_buffer;
+
+    size_t buffer_size;
+    void*  kernel_buffer;
+    void*  user_buffer;
 
     // 窗口层级树
-    struct window_s *parent;
-    struct list_head children;  // 子窗口链表
-    struct list_head sibling;   // 兄弟窗口链表
+    struct window_s* parent;
+    struct list_head children; // 子窗口链表
+    struct list_head sibling;  // 兄弟窗口链表
 
     // 属性
     uint32_t flags;
-    uint32_t bg_color;      // 背景色, 如果 surface 内容未完全覆盖时使用
-    char title[WIN_TITLE_MAX];
-
-    bool has_restore_pos;
-    bool has_restore_bounds;
-    bool is_maximized;
-    bool is_minimized;
 
 } window_t;
 
-/*!
- * \brief 窗口管理器主循环任务
- */
+typedef struct {
+    int x, y, w, h;
+} window_info_t;
+
 void window_manager_handler(void);
 /*!
- * \brief Test: 测试用, 标记屏幕为脏区域, 实现脏矩形后删除
+ * \brief
  */
 void window_mark_dirty();
 /*!
@@ -84,11 +59,11 @@ void init_window_manager();
 /*!
  * \brief 创建一个新窗口
  */
-window_t* create_window(int x, int y, int w, int h, const char* title, uint32_t bg_color);
+window_t* create_window(int x, int y, int w, int h, int owner);
 /*!
  * \brief 销毁指定窗口
  */
-void destroy_window(window_t* win);
+bool destroy_window(window_t* win);
 /*!
  * \brief 刷新指定窗口（重绘该窗口及其子窗口）
  */
@@ -112,30 +87,34 @@ window_t* window_from_point(int x, int y);
  * \param buttons 鼠标按键状态 (Bit 0: 左键, Bit 1: 右键, Bit 2: 中键)
  */
 void window_manager_on_mouse(int x, int y, int buttons);
-/*!
- * \brief 绘制窗口装饰 (标题栏, 边框等)
- */
-void window_draw_decoration(window_t* win);
+void window_manager_on_key(uint32_t key);
 /*!
  * \brief 绘制内容 (目前仅填充背景色)
  */
-void window_fill(window_t* win, uint32_t color);
-/*!
- * \brief 切换窗口最大化状态
- */
-void window_toggle_maximize(window_t* win);
-/*!
- * \brief 切换窗口最小化状态
- */
-void window_toggle_minimize(window_t* win);
+bool window_fill(window_t* win, uint32_t color);
+bool window_draw_recursive(
+    graphics_surface_t* dest, window_t* win, int abs_x, int abs_y);
+bool window_move_abs(window_t* win, int x, int y);
 
 /* Syscall */
 
-int do_get_root_window_handle();                                                        //< 获取根窗口句柄
-int do_open_window(int x, int y, int w, int h, const char* title, uint32_t bg_color);   //< 创建窗口, 返回窗口句柄
-bool do_close_window(int handle);                                                       //< 关闭窗口
-bool do_refresh_window(int handle);                                                     //< 刷新指定窗口
-bool do_refresh_all_window();                                                           //< 刷新所有窗口
-bool do_set_window_surface_buffer(int handle, void **win_surface_buffer);               //< 设置窗口的用户内存映射
+int do_get_root_window_handle(); //< 获取根窗口句柄
+
+bool do_set_root_window_owner(int pid);
+bool do_set_window_info(int handle, window_info_t* win_info); //< 获取窗口信息
+bool do_set_window_surface_buffer(
+    int handle, void** win_surface_buffer); //< 设置窗口的用户内存映射
+
+int  do_open_window(int x, int y, int w, int h); //< 创建窗口, 返回窗口句柄
+bool do_close_window(int handle);                //< 关闭窗口
+bool do_refresh_window(int handle);              //< 刷新指定窗口
+bool do_refresh_window_manager();                //< 刷新所有窗口
+
+bool do_move_abs_window(int handle, int x, int y);
+
+// TODO:
+
+bool do_change_cursor(int style);
+bool do_resize_window(int handle, int w, int h);
 
 #endif

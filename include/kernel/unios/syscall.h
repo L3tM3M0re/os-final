@@ -29,16 +29,19 @@ enum {
     NR_environ,
     NR_krnlobj_request,
 
+    NR_get_root_window_handle,
+    NR_set_root_window_owner,
+    NR_set_window_info,
+    NR_set_window_surface_buffer,
     NR_open_window,
     NR_close_window,
     NR_refresh_window,
-    NR_refresh_all_window,
-    NR_get_root_window_handle,
-    NR_set_window_surface_buffer,
+    NR_refresh_window_manager,
+    NR_move_abs_window,
 
     NR_fill_rect,
 
-    NR_sendrec,               //< 进程间通信 (IPC)
+    NR_sendrec, //< 进程间通信 (IPC)
 
     //! total syscalls
     NR_SYSCALLS = NR_sendrec + 1,

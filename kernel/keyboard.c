@@ -62,7 +62,7 @@ static void mouse_write(uint8_t byte) {
     outb(KB_CMD, 0xD4); // 发送“下一个字节是给鼠标的”命令
     kb_wait();
     outb(KB_DATA, byte);
-    mouse_wait_ack();   // 等待鼠标确认 (Device -> CPU)
+    mouse_wait_ack(); // 等待鼠标确认 (Device -> CPU)
 }
 
 static void set_mouse_leds() {
@@ -127,9 +127,7 @@ void kb_handler(int irq) {
 };
 
 void mouse_handler(int irq) {
-    if (compare_exchange_strong(&mouse_in.lock, 0, 1) != 0) {
-        return;
-    }
+    if (compare_exchange_strong(&mouse_in.lock, 0, 1) != 0) { return; }
 
     uint8_t scan_code = inb(0x60);
 
@@ -140,9 +138,10 @@ void mouse_handler(int irq) {
     }
 
     if (mouse_in.count == 0 && !(scan_code & 0x08)) {
-         // kwarn("Mouse misaligned! dropping byte: 0x%x", scan_code); // 可选调试
-         release(&mouse_in.lock);
-         return;
+        // kwarn("Mouse misaligned! dropping byte: 0x%x", scan_code); //
+        // 可选调试
+        release(&mouse_in.lock);
+        return;
     }
 
     mouse_in.buf[mouse_in.count++] = scan_code;
@@ -212,9 +211,7 @@ void init_mouse() {
     mouse_in.count = 0;
     mouse_in.lock  = 0;
 
-    while (inb(0x64) & 0x01) {
-        inb(0x60);
-    }
+    while (inb(0x64) & 0x01) { inb(0x60); }
 
     put_irq_handler(MOUSE_IRQ, mouse_handler);
     enable_irq(MOUSE_IRQ);
@@ -241,6 +238,192 @@ void init_keyboard() {
 
     init_mouse();
     set_mouse_leds();
+}
+
+void input_driver_thread(void) {
+    while (true) {
+        bool     make         = false;
+        uint32_t key          = 0;
+        bool     code_with_E0 = false;
+
+        // 获取第一个字节
+        uint8_t scan_code = get_byte_from_kb_buf();
+
+        // 处理 PauseBreak (0xE1 开头)
+        if (scan_code == 0xe1) {
+            uint8_t pausebreak_scan_code[] = {
+                0xe1, 0x1d, 0x45, 0xe1, 0x9d, 0xc5};
+            int is_pausebreak = 1;
+            for (int i = 1; i < 6; ++i) {
+                if (get_byte_from_kb_buf() != pausebreak_scan_code[i]) {
+                    is_pausebreak = 0;
+                    break;
+                }
+            }
+            if (is_pausebreak) { key = PAUSEBREAK; }
+        }
+        // 处理 E0 前缀 (PrintScreen 等)
+        else if (scan_code == 0xe0) {
+            code_with_E0 = true;
+            scan_code    = get_byte_from_kb_buf();
+            if (scan_code == 0x2a) {
+                //! PrintScreen pressed
+                code_with_E0 = false;
+                if ((scan_code = get_byte_from_kb_buf()) == 0xe0) {
+                    code_with_E0 = true;
+                    if ((scan_code = get_byte_from_kb_buf()) == 0x37) {
+                        key  = PRINTSCREEN;
+                        make = true;
+                    }
+                }
+            } else if (scan_code == 0xb7) {
+                //! PrintScreen release
+                code_with_E0 = false;
+                if ((scan_code = get_byte_from_kb_buf()) == 0xe0) {
+                    code_with_E0 = true;
+                    if ((scan_code = get_byte_from_kb_buf()) == 0xaa) {
+                        key  = PRINTSCREEN;
+                        make = false;
+                    }
+                }
+            }
+        }
+
+        if ((key != PAUSEBREAK) && (key != PRINTSCREEN)) {
+            uint32_t* keyrow = keymap[scan_code & 0x7f];
+            make             = !(scan_code & FLAG_BREAK);
+            int column       = 0;
+
+            bool caps = shift_l || shift_r;
+            if (caps_lock && keyrow[0] >= 'a' && keyrow[0] <= 'z') {
+                caps = !caps;
+            }
+
+            if (caps) { column = 1; }
+            if (code_with_E0) { column = 2; }
+
+            key = keyrow[column];
+
+            switch (key) {
+                case SHIFT_L: {
+                    shift_l = make;
+                } break;
+                case SHIFT_R: {
+                    shift_r = make;
+                } break;
+                case CTRL_L: {
+                    ctrl_l = make;
+                } break;
+                case CTRL_R: {
+                    ctrl_r = make;
+                } break;
+                case ALT_L: {
+                    alt_l = make;
+                } break;
+                case ALT_R: {
+                    alt_l = make;
+                } break;
+                case CAPS_LOCK: {
+                    if (make) {
+                        caps_lock = !caps_lock;
+                        set_leds();
+                    }
+                } break;
+                case NUM_LOCK: {
+                    if (make) {
+                        num_lock = !num_lock;
+                        set_leds();
+                    }
+                } break;
+                case SCROLL_LOCK: {
+                    if (make) {
+                        scroll_lock = !scroll_lock;
+                        set_leds();
+                    }
+                } break;
+            }
+        }
+
+        //! break code is ignored
+        if (!make) { continue; }
+
+        //! deal with the numpad first
+        bool numpad = key >= PAD_SLASH && key <= PAD_9;
+        if (numpad) {
+            switch (key) {
+                case PAD_SLASH: {
+                    key = '/';
+                } break;
+                case PAD_STAR: {
+                    key = '*';
+                } break;
+                case PAD_MINUS: {
+                    key = '-';
+                } break;
+                case PAD_PLUS: {
+                    key = '+';
+                } break;
+                case PAD_ENTER: {
+                    key = ENTER;
+                } break;
+                default: {
+                    //! value of these keys depends on the Numlock
+                    if (num_lock) {
+                        //! '0'~'9' & '.'
+                        if (key >= PAD_0 && key <= PAD_9) {
+                            key = key - PAD_0 + '0';
+                        } else if (key == PAD_DOT) {
+                            key = '.';
+                        }
+                        break;
+                    }
+                    switch (key) {
+                        case PAD_HOME: {
+                            key = HOME;
+                        } break;
+                        case PAD_END: {
+                            key = END;
+                        } break;
+                        case PAD_PAGEUP: {
+                            key = PAGEUP;
+                        } break;
+                        case PAD_PAGEDOWN: {
+                            key = PAGEDOWN;
+                        } break;
+                        case PAD_INS: {
+                            key = INSERT;
+                        } break;
+                        case PAD_UP: {
+                            key = UP;
+                        } break;
+                        case PAD_DOWN: {
+                            key = DOWN;
+                        } break;
+                        case PAD_LEFT: {
+                            key = LEFT;
+                        } break;
+                        case PAD_RIGHT: {
+                            key = RIGHT;
+                        } break;
+                        case PAD_DOT: {
+                            key = DELETE;
+                        } break;
+                    }
+                } break;
+            }
+        }
+
+        key |= shift_l ? FLAG_SHIFT_L : 0;
+        key |= shift_r ? FLAG_SHIFT_R : 0;
+        key |= ctrl_l ? FLAG_CTRL_L : 0;
+        key |= ctrl_r ? FLAG_CTRL_R : 0;
+        key |= alt_l ? FLAG_ALT_L : 0;
+        key |= alt_r ? FLAG_ALT_R : 0;
+        key |= numpad ? FLAG_PAD : 0;
+
+        // --- 发送给 GUI ---
+        if (key != 0) { window_manager_on_key(key); }
+    }
 }
 
 void keyboard_read(tty_t* p_tty) {
@@ -424,6 +607,8 @@ void keyboard_read(tty_t* p_tty) {
         key |= alt_r ? FLAG_ALT_R : 0;
         key |= numpad ? FLAG_PAD : 0;
 
-        tty_keyboard_proc(p_tty, key);
+        kinfo("[Debug] Press key: %d", key);
+        window_manager_on_key(key);
+        // tty_keyboard_proc(p_tty, key);
     }
 }

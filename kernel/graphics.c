@@ -39,13 +39,13 @@
 //! choose a kernel virtual window far from direct-mapped low memory
 #define BGA_LFB_LIN_BASE 0xE0000000u
 
-static graphics_mode_t g_mode;
+static graphics_mode_t    g_mode;
 static graphics_surface_t g_front;
 static graphics_surface_t g_back;
-static bool            g_ready = false;
+static bool               g_ready = false;
 
 static volatile bool g_graphics_lock = false;
-static uint32_t g_cursor_bg_backup[64 * 64];
+static uint32_t      g_cursor_bg_backup[64 * 64];
 
 static graphics_rect_t g_clip_rect = {0, 0, 0, 0};
 
@@ -60,7 +60,7 @@ typedef struct {
 
 static cursor_state_t g_cursor;
 
-static uint32_t       g_cursor_pixels[16 * 16];
+static uint32_t           g_cursor_pixels[16 * 16];
 static graphics_surface_t g_cursor_sprite;
 
 static inline void bga_write(uint16_t reg, uint16_t value) {
@@ -79,10 +79,10 @@ static bool bga_available() {
     return (id & 0xFFF0) == (BGA_ID0 & 0xFFF0);
 }
 
-static inline uint32_t pci_cfg_read32(
-    uint8_t bus, uint8_t dev, uint8_t func, uint8_t offset) {
-    uint32_t addr = 0x80000000u | (bus << 16) | (dev << 11)
-                    | (func << 8) | (offset & 0xfc);
+static inline uint32_t
+    pci_cfg_read32(uint8_t bus, uint8_t dev, uint8_t func, uint8_t offset) {
+    uint32_t addr =
+        0x80000000u | (bus << 16) | (dev << 11) | (func << 8) | (offset & 0xfc);
     outl(0xcf8, addr);
     return inl(0xcfc);
 }
@@ -101,8 +101,8 @@ static uintptr_t find_bochs_lfb_base() {
         if (bar0 & 0x1) { continue; } // io bar, skip
         uintptr_t base = bar0 & ~0xFu;
         if ((bar0 & 0x6) == 0x4) {
-            uint32_t bar1 = pci_cfg_read32(0, dev, 0, 0x14);
-            base |= ((uint64_t)bar1) << 32;
+            uint32_t bar1  = pci_cfg_read32(0, dev, 0, 0x14);
+            base          |= ((uint64_t)bar1) << 32;
         }
         return base;
     }
@@ -120,18 +120,16 @@ static bool bga_set_mode(uint16_t width, uint16_t height, uint16_t bpp) {
     bga_write(BGA_REG_BANK, 0);
     bga_write(BGA_REG_X_OFFSET, 0);
     bga_write(BGA_REG_Y_OFFSET, 0);
-    bga_write(
-        BGA_REG_ENABLE, BGA_ENABLED | BGA_LFB_ENABLED | BGA_NOCLEARMEM);
+    bga_write(BGA_REG_ENABLE, BGA_ENABLED | BGA_LFB_ENABLED | BGA_NOCLEARMEM);
 
-    return bga_read(BGA_REG_XRES) == width
-           && bga_read(BGA_REG_YRES) == height
-           && bga_read(BGA_REG_BPP) == bpp;
+    return bga_read(BGA_REG_XRES) == width && bga_read(BGA_REG_YRES) == height
+        && bga_read(BGA_REG_BPP) == bpp;
 }
 
 static bool map_lfb(uintptr_t phy_base, size_t size, uintptr_t lin_base) {
-    uint32_t cr3      = rcr3();
-    size_t   mapped   = 0;
-    bool     succeed  = true;
+    uint32_t cr3     = rcr3();
+    size_t   mapped  = 0;
+    bool     succeed = true;
     //! mark LFB uncachable to force writes reaching device
     uint32_t pde_attr = PG_P | PG_S | PG_RWX | PG_MASK_PWT | PG_MASK_PCD;
     uint32_t pte_attr = PG_P | PG_S | PG_RWX | PG_MASK_PWT | PG_MASK_PCD;
@@ -193,8 +191,12 @@ graphics_rect_t graphics_get_clip_rect() {
     return g_clip_rect;
 }
 
-void graphics_blit(graphics_surface_t *dst, int dx, int dy,
-                   const graphics_surface_t *src, const graphics_rect_t *src_area) {
+void graphics_blit(
+    graphics_surface_t       *dst,
+    int                       dx,
+    int                       dy,
+    const graphics_surface_t *src,
+    const graphics_rect_t    *src_area) {
     if (!dst || !src || !dst->pixels || !src->pixels) return;
 
     int s_x = src_area ? src_area->x : 0;
@@ -209,11 +211,11 @@ void graphics_blit(graphics_surface_t *dst, int dx, int dy,
 
     if (eff_x < 0) {
         eff_w += eff_x;
-        eff_x = 0;
+        eff_x  = 0;
     }
     if (eff_y < 0) {
         eff_h += eff_y;
-        eff_y = 0;
+        eff_y  = 0;
     }
 
     graphics_rect_t d_rect = {eff_x, eff_y, eff_w, eff_h};
@@ -233,15 +235,17 @@ void graphics_blit(graphics_surface_t *dst, int dx, int dy,
     if (s_x < 0) s_x = 0;
     if (s_y < 0) s_y = 0;
 
-    if (s_x + d_rect.w > src->width)  d_rect.w = src->width - s_x;
+    if (s_x + d_rect.w > src->width) d_rect.w = src->width - s_x;
     if (s_y + d_rect.h > src->height) d_rect.h = src->height - s_y;
 
     if (d_rect.w <= 0 || d_rect.h <= 0) { return; }
 
     // 执行内存拷贝
     uint32_t bpp_stride = src->bpp / 8;
-    uint8_t *dst_ptr = (uint8_t *)dst->pixels + (d_rect.y * dst->pitch) + (d_rect.x * bpp_stride);
-    const uint8_t *src_ptr = (const uint8_t *)src->pixels + (s_y * src->pitch) + (s_x * bpp_stride);
+    uint8_t *dst_ptr    = (uint8_t *)dst->pixels + (d_rect.y * dst->pitch)
+                     + (d_rect.x * bpp_stride);
+    const uint8_t *src_ptr =
+        (const uint8_t *)src->pixels + (s_y * src->pitch) + (s_x * bpp_stride);
 
     for (int i = 0; i < d_rect.h; ++i) {
         memcpy(dst_ptr, src_ptr, d_rect.w * bpp_stride);
@@ -261,13 +265,11 @@ void graphics_fill_rect(
         if (!intersect_rect(&rect, &g_clip_rect)) return;
     }
 
-    uint32_t *base = surf->pixels;
+    uint32_t *base   = surf->pixels;
     uint32_t  stride = surf->pitch / 4;
     for (uint32_t y = 0; y < rect.h; ++y) {
         uint32_t *row = base + (rect.y + y) * stride + rect.x;
-        for (uint32_t x = 0; x < rect.w; ++x) {
-            row[x] = argb;
-        }
+        for (uint32_t x = 0; x < rect.w; ++x) { row[x] = argb; }
     }
 }
 
@@ -325,7 +327,7 @@ static void cursor_build_bitmap() {
         for (int x = 0; x < 16; ++x) {
             char     c   = rows[y][x];
             uint32_t pix = 0x00000000;
-            if(c == 'A') {
+            if (c == 'A') {
                 pix = 0xff452a1b;
             } else if (c == 'B') {
                 pix = 0xff543721;
@@ -382,7 +384,7 @@ static void cursor_redraw() {
 void graphics_map_lfb(uint32_t cr3) {
     if (!g_ready) { return; }
 
-    size_t   size_pages = round_up(g_mode.lfb_size, NUM_4K);
+    size_t size_pages = round_up(g_mode.lfb_size, NUM_4K);
     // 显存需要设置为不可缓存 (PWT | PCD) 以确保写入立即生效
     uint32_t attr = PG_P | PG_S | PG_RWX | PG_MASK_PWT | PG_MASK_PCD;
 
@@ -459,8 +461,8 @@ static void draw_demo_pattern(graphics_surface_t *surf) {
     for (uint32_t y = 0; y < surf->height; ++y) {
         uint8_t g = (uint8_t)((y * 255) / safe_h);
         for (uint32_t x = 0; x < surf->width; ++x) {
-            uint8_t r = (uint8_t)((x * 255) / safe_w);
-            uint8_t b = (uint8_t)(((x + y) * 255) / sum_hw);
+            uint8_t r          = (uint8_t)((x * 255) / safe_w);
+            uint8_t b          = (uint8_t)(((x + y) * 255) / sum_hw);
             fb[y * stride + x] = pack_rgb(r, g, b);
         }
     }
@@ -484,14 +486,20 @@ static void _save_cursor_bg(int x, int y) {
     int h = g_cursor_sprite.height;
 
     int bx = x, by = y, bw = w, bh = h;
-    if (bx < 0) { bw += bx; bx = 0; }
-    if (by < 0) { bh += by; by = 0; }
-    if (bx + bw > g_back.width)  bw = g_back.width - bx;
+    if (bx < 0) {
+        bw += bx;
+        bx  = 0;
+    }
+    if (by < 0) {
+        bh += by;
+        by  = 0;
+    }
+    if (bx + bw > g_back.width) bw = g_back.width - bx;
     if (by + bh > g_back.height) bh = g_back.height - by;
     if (bw <= 0 || bh <= 0) return;
 
-    uint32_t *src = (uint32_t *)g_back.pixels;
-    int pitch = g_back.pitch / 4;
+    uint32_t *src   = (uint32_t *)g_back.pixels;
+    int       pitch = g_back.pitch / 4;
     for (int i = 0; i < bh; ++i) {
         memcpy(&g_cursor_bg_backup[i * w], &src[(by + i) * pitch + bx], bw * 4);
     }
@@ -503,14 +511,20 @@ static void _restore_cursor_bg(int x, int y) {
     int h = g_cursor_sprite.height;
 
     int bx = x, by = y, bw = w, bh = h;
-    if (bx < 0) { bw += bx; bx = 0; }
-    if (by < 0) { bh += by; by = 0; }
-    if (bx + bw > g_back.width)  bw = g_back.width - bx;
+    if (bx < 0) {
+        bw += bx;
+        bx  = 0;
+    }
+    if (by < 0) {
+        bh += by;
+        by  = 0;
+    }
+    if (bx + bw > g_back.width) bw = g_back.width - bx;
     if (by + bh > g_back.height) bh = g_back.height - by;
     if (bw <= 0 || bh <= 0) return;
 
-    uint32_t *dst = (uint32_t *)g_back.pixels;
-    int pitch = g_back.pitch / 4;
+    uint32_t *dst   = (uint32_t *)g_back.pixels;
+    int       pitch = g_back.pitch / 4;
     for (int i = 0; i < bh; ++i) {
         memcpy(&dst[(by + i) * pitch + bx], &g_cursor_bg_backup[i * w], bw * 4);
     }
@@ -520,8 +534,8 @@ bool graphics_present(const graphics_rect_t *rects, size_t count) {
     if (g_front.pixels == NULL || g_back.pixels == NULL) { return false; }
 
     bool cursor_active = g_cursor.ready;
-    int cx = g_cursor.x;
-    int cy = g_cursor.y;
+    int  cx            = g_cursor.x;
+    int  cy            = g_cursor.y;
 
     if (cursor_active) {
         _save_cursor_bg(cx, cy);
@@ -543,9 +557,7 @@ bool graphics_present(const graphics_rect_t *rects, size_t count) {
         g_cursor.prev_y = cy;
     }
 
-    if (g_cursor.x != cx || g_cursor.y != cy) {
-        graphics_cursor_render();
-    }
+    if (g_cursor.x != cx || g_cursor.y != cy) { graphics_cursor_render(); }
 
     return true;
 }
@@ -563,8 +575,8 @@ bool graphics_boot_demo(void) {
     }
 
     size_t bytes_per_pixel = CONFIG_GRAPHICS_BPP / 8;
-    size_t fb_size =
-        (size_t)CONFIG_GRAPHICS_WIDTH * CONFIG_GRAPHICS_HEIGHT * bytes_per_pixel;
+    size_t fb_size = (size_t)CONFIG_GRAPHICS_WIDTH * CONFIG_GRAPHICS_HEIGHT
+                   * bytes_per_pixel;
     size_t fb_size_pages = round_up(fb_size, NUM_4K);
 
     uint32_t vram_blocks = bga_read(BGA_REG_VIDEO_MEMORYKB);
@@ -603,7 +615,7 @@ bool graphics_boot_demo(void) {
 
     //! quick self-test: write & read back first pixel
     volatile uint32_t *fb_test = (uint32_t *)BGA_LFB_LIN_BASE;
-    uint32_t            probe  = 0x00ff00ff;
+    uint32_t           probe   = 0x00ff00ff;
     fb_test[0]                 = probe;
     if (fb_test[0] != probe) {
         kwarn(
@@ -663,28 +675,33 @@ bool graphics_boot_demo(void) {
 }
 
 static void graphics_draw_surface_alpha(
-    graphics_surface_t *dst,
-    int dx, int dy,
-    const graphics_surface_t *src)
-{
+    graphics_surface_t *dst, int dx, int dy, const graphics_surface_t *src) {
     if (!dst || !src || !dst->pixels || !src->pixels) return;
 
     int src_x = 0, src_y = 0;
     int w = src->width;
     int h = src->height;
 
-    if (dx < 0) { src_x = -dx; w += dx; dx = 0; }
-    if (dy < 0) { src_y = -dy; h += dy; dy = 0; }
+    if (dx < 0) {
+        src_x  = -dx;
+        w     += dx;
+        dx     = 0;
+    }
+    if (dy < 0) {
+        src_y  = -dy;
+        h     += dy;
+        dy     = 0;
+    }
 
-    if (dx + w > dst->width)  w = dst->width - dx;
+    if (dx + w > dst->width) w = dst->width - dx;
     if (dy + h > dst->height) h = dst->height - dy;
 
     if (w <= 0 || h <= 0) return;
 
     uint32_t *src_pixels = (uint32_t *)src->pixels;
     uint32_t *dst_pixels = (uint32_t *)dst->pixels;
-    int src_pitch = src->pitch / 4;
-    int dst_pitch = dst->pitch / 4;
+    int       src_pitch  = src->pitch / 4;
+    int       dst_pitch  = dst->pitch / 4;
 
     for (int y = 0; y < h; ++y) {
         uint32_t *s_row = src_pixels + (src_y + y) * src_pitch + src_x;
@@ -692,9 +709,7 @@ static void graphics_draw_surface_alpha(
 
         for (int x = 0; x < w; ++x) {
             uint32_t pixel = s_row[x];
-            if ((pixel >> 24) != 0) {
-                d_row[x] = pixel;
-            }
+            if ((pixel >> 24) != 0) { d_row[x] = pixel; }
         }
     }
 }
@@ -713,7 +728,12 @@ void graphics_unlock(void) {
     g_graphics_lock = false;
 }
 
-void graphics_draw_glyph(graphics_surface_t *dst, int x, int y, const uint8_t *bitmap, uint32_t color) {
+void graphics_draw_glyph(
+    graphics_surface_t *dst,
+    int                 x,
+    int                 y,
+    const uint8_t      *bitmap,
+    uint32_t            color) {
     if (!dst || !dst->pixels || !bitmap) return;
 
     int max_x = dst->width;
@@ -724,7 +744,7 @@ void graphics_draw_glyph(graphics_surface_t *dst, int x, int y, const uint8_t *b
         if (draw_y < 0 || draw_y >= max_y) continue;
 
         // bitmap 存储格式：Row0_Left, Row0_Right, Row1_Left, ...
-        uint8_t byte_left = bitmap[row * 2];
+        uint8_t byte_left  = bitmap[row * 2];
         uint8_t byte_right = bitmap[row * 2 + 1];
 
         uint16_t row_bits = ((uint16_t)byte_left << 8) | byte_right;
@@ -734,7 +754,8 @@ void graphics_draw_glyph(graphics_surface_t *dst, int x, int y, const uint8_t *b
                 int draw_x = x + col;
 
                 if (draw_x >= 0 && draw_x < max_x) {
-                    uint32_t *pixel = (uint32_t*)dst->pixels + draw_y * (dst->pitch / 4) + draw_x;
+                    uint32_t *pixel = (uint32_t *)dst->pixels
+                                    + draw_y * (dst->pitch / 4) + draw_x;
                     *pixel = color;
                 }
             }
@@ -742,7 +763,8 @@ void graphics_draw_glyph(graphics_surface_t *dst, int x, int y, const uint8_t *b
     }
 }
 
-void graphics_draw_hollow_rect(graphics_surface_t *dst, int x, int y, int w, int h, uint32_t color) {
+void graphics_draw_hollow_rect(
+    graphics_surface_t *dst, int x, int y, int w, int h, uint32_t color) {
     if (w <= 0 || h <= 0) return;
 
     graphics_rect_t r_top = {x, y, w, 1};
@@ -758,21 +780,22 @@ void graphics_draw_hollow_rect(graphics_surface_t *dst, int x, int y, int w, int
     graphics_fill_rect(dst, r_right, color);
 }
 
-void graphics_draw_text(graphics_surface_t *dst, int x, int y, const char *text, uint32_t color) {
+void graphics_draw_text(
+    graphics_surface_t *dst, int x, int y, const char *text, uint32_t color) {
     if (!text) return;
 
-    int cur_x = x;
-    int cur_y = y;
-    const char *p = text;
+    int         cur_x = x;
+    int         cur_y = y;
+    const char *p     = text;
 
     while (*p) {
-        uint32_t code = 0;
-        int bytes = utf8_decode(p, &code);
+        uint32_t code  = 0;
+        int      bytes = utf8_decode(p, &code);
 
         if (code == '\n') {
-            cur_x = x;
+            cur_x  = x;
             cur_y += 16;
-            p += bytes;
+            p     += bytes;
             continue;
         }
 
@@ -781,8 +804,8 @@ void graphics_draw_text(graphics_surface_t *dst, int x, int y, const char *text,
 
         if (bitmap) {
             graphics_draw_glyph(dst, cur_x, cur_y, bitmap, color);
-            int advance = (code < 128) ? 8 : 16;
-            cur_x += advance;
+            int advance  = (code < 128) ? 8 : 16;
+            cur_x       += advance;
         } else {
             // 字库里没有这个字, 空框占位
             graphics_draw_hollow_rect(dst, cur_x + 1, cur_y + 1, 14, 14, color);
@@ -792,7 +815,6 @@ void graphics_draw_text(graphics_surface_t *dst, int x, int y, const char *text,
         p += bytes;
     }
 }
-
 
 /* Syscall */
 

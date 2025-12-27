@@ -2,11 +2,14 @@
 #include <unios/clock.h>
 #include <unios/memory.h>
 #include <unios/assert.h>
+#include <unios/keyboard.h>
 #include <unios/tracing.h>
 #include <unios/proc.h>
 #include <unios/schedule.h>
 #include <unios/page.h>
+#include <unios/ipc.h>
 #include <lib/string.h>
+#include <lib/syscall.h>
 #include <lib/container_of.h>
 #include <unios/font.h>
 #include <stdlib.h>
@@ -16,76 +19,61 @@
 
 #define DISABLE_INTERRUPTS() __asm__ volatile("cli")
 #define ENABLE_INTERRUPTS()  __asm__ volatile("sti")
-#define DRAG_THRESHOLD 8
-#define RESIZE_BORDER 6
 
-enum {
-    RESIZE_NONE   = 0,
-    RESIZE_LEFT   = 1 << 0,
-    RESIZE_RIGHT  = 1 << 1,
-    RESIZE_TOP    = 1 << 2,
-    RESIZE_BOTTOM = 1 << 3,
-};
+#define COLOR_BACK 0xFF336699
 
 static window_t* handle_table[WIN_MAX_WINDOWS]; // 句柄表
 
-static bool g_handled = false;
-static int drag_start_mx = 0;
-static int drag_start_my = 0;
+static bool g_handled      = false;
+static int  drag_start_mx  = 0;
+static int  drag_start_my  = 0;
 static bool is_drag_active = false;
 
 static window_t* root_window = NULL;
 
-static window_t* drag_window = NULL; // 当前正在拖拽的窗口
-static int drag_off_x = 0;           // 鼠标点击位置相对于窗口左上角的偏移
-static int drag_off_y = 0;
-static window_t* resize_window = NULL;
-static int resize_mode = RESIZE_NONE;
-static int resize_start_x = 0;
-static int resize_start_y = 0;
-static int resize_start_w = 0;
-static int resize_start_h = 0;
-static int resize_start_mx = 0;
-static int resize_start_my = 0;
-
-static const graphics_rect_t EMPTY_RECT = {0, 0, 0, 0};
-static graphics_rect_t g_dirty_rect = {0, 0, 0, 0};
-static volatile bool g_has_dirty = false;
+static const graphics_rect_t EMPTY_RECT   = {0, 0, 0, 0};
+static graphics_rect_t       g_dirty_rect = {0, 0, 0, 0};
+static volatile bool         g_has_dirty  = false;
 
 static volatile bool g_mouse_event_pending = false;
-static int g_cmd_x = 0;
-static int g_cmd_y = 0;
-static int g_cmd_buttons = 0;
+static int           g_cmd_x               = 0;
+static int           g_cmd_y               = 0;
+static int           g_cmd_buttons         = 0;
 
 static int g_mouse_last_x = 0; // 记录上一帧的鼠标位置
 static int g_mouse_last_y = 0;
 
-static bool window_recreate_surface(window_t* win, int new_w, int new_h);
-static bool window_set_bounds(window_t* win, int x, int y, int w, int h);
+static volatile bool g_key_event_pending = false;
+static uint32_t      g_key_pressed       = 0;
 
-static void window_store_pos(window_t* win, int x, int y);
-static void window_store_bounds(window_t* win, int x, int y, int w, int h);
-static void window_store(window_t* win);
-static void window_restore_bounds(window_t* win);
-static void window_restore(window_t* win);
+static int min_int(int a, int b) {
+    return a < b ? a : b;
+}
 
-static int min_int(int a, int b) { return a < b ? a : b; }
-static int max_int(int a, int b) { return a > b ? a : b; }
+static int max_int(int a, int b) {
+    return a > b ? a : b;
+}
 
-static bool check_window_handle(window_t *win, int handle) {
-    if (handle < 0 || handle >= WIN_MAX_WINDOWS) {
-        return false;
-    }
-    if (handle_table[handle] != win) {
-        return false;
-    }
+static inline uint32_t clamp_u32(uint32_t val, uint32_t min_v, uint32_t max_v) {
+    if (val < min_v) { return min_v; }
+    if (val > max_v) { return max_v; }
+    return val;
+}
+
+static inline int clamp_int(int val, int min_v, int max_v) {
+    if (val < min_v) { return min_v; }
+    if (val > max_v) { return max_v; }
+    return val;
+}
+
+static bool check_window_handle(window_t* win, int handle) {
+    if (handle < 0 || handle >= WIN_MAX_WINDOWS) { return false; }
+    if (handle_table[handle] != win) { return false; }
     return true;
 }
 
-static bool set_window_by_handle(int handle, window_t **win) {
-    if (handle < 0 || handle >= WIN_MAX_WINDOWS) {
-        return false;
-    }
+static bool set_window_by_handle(int handle, window_t** win) {
+    if (handle < 0 || handle >= WIN_MAX_WINDOWS) { return false; }
     if (!handle_table[handle] || handle_table[handle]->id != handle) {
         return false;
     }
@@ -97,7 +85,7 @@ static bool try_create_window(window_t* win) {
     for (int i = 0; i < WIN_MAX_WINDOWS; ++i) {
         if (handle_table[i] == NULL) {
             handle_table[i] = win;
-            win->id = i;
+            win->id         = i;
             return true;
         }
     }
@@ -106,9 +94,7 @@ static bool try_create_window(window_t* win) {
 
 static bool try_destroy_window(window_t* win) {
     int id = win->id;
-    if (!check_window_handle(win, id)) {
-        return false;
-    }
+    if (!check_window_handle(win, id)) { return false; }
     handle_table[id] = NULL;
     return true;
 }
@@ -128,11 +114,11 @@ static graphics_rect_t rect_union(graphics_rect_t a, graphics_rect_t b) {
 
 static void reset_dirty_rect() {
     g_dirty_rect = EMPTY_RECT;
-    g_has_dirty = false;
+    g_has_dirty  = false;
 }
 
 void window_mark_dirty() {
-    const graphics_mode_t *mode = graphics_current_mode();
+    const graphics_mode_t* mode = graphics_current_mode();
     if (mode) {
         window_invalidate_rect(root_window, 0, 0, mode->width, mode->height);
     }
@@ -147,19 +133,19 @@ void window_invalidate_rect(window_t* win, int x, int y, int w, int h) {
     int fix_h = h;
 
     // 边界裁剪
-    const graphics_mode_t *mode = graphics_current_mode();
+    const graphics_mode_t* mode = graphics_current_mode();
     if (!mode) { return; }
 
     if (abs_x < 0) {
         fix_w += abs_x;
-        abs_x = 0;
+        abs_x  = 0;
     }
     if (abs_y < 0) {
         fix_h += abs_y;
-        abs_y = 0;
+        abs_y  = 0;
     }
 
-    if (abs_x + fix_w > mode->width)  fix_w = mode->width - abs_x;
+    if (abs_x + fix_w > mode->width) fix_w = mode->width - abs_x;
     if (abs_y + fix_h > mode->height) fix_h = mode->height - abs_y;
 
     if (fix_w <= 0 || fix_h <= 0) return;
@@ -169,7 +155,7 @@ void window_invalidate_rect(window_t* win, int x, int y, int w, int h) {
     // 合并到全局脏区域
     if (!g_has_dirty) {
         g_dirty_rect = new_rect;
-        g_has_dirty = true;
+        g_has_dirty  = true;
     } else {
         g_dirty_rect = rect_union(g_dirty_rect, new_rect);
     }
@@ -180,158 +166,61 @@ void window_manager_handler(void) {
     while (true) {
         if (g_mouse_event_pending) {
             DISABLE_INTERRUPTS();
-            int x = g_cmd_x;
-            int y = g_cmd_y;
-            int buttons = g_cmd_buttons;
+            int x                 = g_cmd_x;
+            int y                 = g_cmd_y;
+            int buttons           = g_cmd_buttons;
             g_mouse_event_pending = false;
             ENABLE_INTERRUPTS();
-            bool left_btn = (buttons & 1);
-            if (left_btn && !g_handled) {
-                g_handled = true;
-                if (!drag_window && !resize_window) {
-                    window_t* target = window_from_point(x, y);
-                    if (target && target != root_window) {
-                        int local_x = x - target->x;
-                        int local_y = y - target->y;
-                        int btn_size = WIN_TITLE_HEIGHT - 6;
-                        int btn_y = 4;
-                        int btn_close_x = target->w - btn_size - 4;
-                        int btn_max_x = btn_close_x - btn_size - 4;
-                        int btn_min_x = btn_max_x - btn_size - 4;
-                        bool in_btn_band = local_y >= btn_y && local_y < btn_y + btn_size;
-
-                        if (in_btn_band &&
-                            local_x >= btn_close_x && local_x < btn_close_x + btn_size) {
-                            destroy_window(target);
-                        } else if (in_btn_band &&
-                                   local_x >= btn_max_x && local_x < btn_max_x + btn_size) {
-                            window_toggle_maximize(target);
-                            window_bring_to_front(target);
-                        } else if (in_btn_band &&
-                                   local_x >= btn_min_x && local_x < btn_min_x + btn_size) {
-                            window_toggle_minimize(target);
-                            window_bring_to_front(target);
-                        } else {
-                            int mode = RESIZE_NONE;
-                            if (!target->is_maximized && !target->is_minimized) {
-                                if (local_x < RESIZE_BORDER) mode |= RESIZE_LEFT;
-                                if (local_x >= target->w - RESIZE_BORDER) mode |= RESIZE_RIGHT;
-                                if (local_y < RESIZE_BORDER) mode |= RESIZE_TOP;
-                                if (local_y >= target->h - RESIZE_BORDER) mode |= RESIZE_BOTTOM;
-                            }
-
-                            if (mode != RESIZE_NONE) {
-                                if (target->is_maximized) {
-                                    window_toggle_maximize(target);
-                                }
-                                resize_window   = target;
-                                resize_mode     = mode;
-                                resize_start_x  = target->x;
-                                resize_start_y  = target->y;
-                                resize_start_w  = target->w;
-                                resize_start_h  = target->h;
-                                resize_start_mx = x;
-                                resize_start_my = y;
-                                window_bring_to_front(target);
-                            } else if (local_y < WIN_TITLE_HEIGHT) {
-                                drag_window = target;
-                                drag_off_x = x - target->x;
-                                drag_off_y = y - target->y;
-                                drag_start_mx = x;
-                                drag_start_my = y;
-                                is_drag_active = false;
-                                window_bring_to_front(target);
-                            } else {
-                                window_bring_to_front(target);
-                            }
-                        }
-                    }
+            window_t* target_win = window_from_point(x, y);
+            if (target_win != NULL) {
+                int local_x = x - target_win->x;
+                int local_y = y - target_win->y;
+                if (target_win->owner_pid != -1) {
+                    message_t msg;
+                    memset(&msg, 0, sizeof(message_t));
+                    msg.type = MSG_GUI_MOUSE_EVENT;
+                    msg.u1   = local_x; // x 坐标
+                    msg.u2   = local_y; // y 坐标
+                    msg.u3   = buttons; // 按键状态
+                    sendrec(SEND, target_win->owner_pid, &msg);
                 }
-            } else if (left_btn && g_handled) {
-                if (resize_window) {
-                    int dx = x - resize_start_mx;
-                    int dy = y - resize_start_my;
 
-                    int new_x = resize_start_x;
-                    int new_y = resize_start_y;
-                    int new_w = resize_start_w;
-                    int new_h = resize_start_h;
-
-                    if (resize_mode & RESIZE_LEFT) {
-                        new_x = min_int(resize_start_x + dx, resize_start_x + resize_start_w - WIN_MIN_WIDTH);
-                        new_w = resize_start_w - dx;
-                    }
-                    if (resize_mode & RESIZE_RIGHT) {
-                        new_w = resize_start_w + dx;
-                    }
-                    if (resize_mode & RESIZE_TOP) {
-                        new_y = min_int(resize_start_y + dy, resize_start_y + resize_start_h - WIN_MIN_HEIGHT);
-                        new_h = resize_start_h - dy;
-                    }
-                    if (resize_mode & RESIZE_BOTTOM) {
-                        new_h = resize_start_h + dy;
-                    }
-
-                    window_set_bounds(resize_window, new_x, new_y, new_w, new_h);
-
-                    window_invalidate_rect(root_window, g_mouse_last_x, g_mouse_last_y, 32, 32);
-                    window_invalidate_rect(root_window, x, y, 32, 32);
-                } else if (drag_window) {
-                    if (!is_drag_active) {
-                        int dx = x - drag_start_mx;
-                        int dy = y - drag_start_my;
-                        if (dx < 0) dx = -dx;
-                        if (dy < 0) dy = -dy;
-
-                        if (dx >= DRAG_THRESHOLD || dy >= DRAG_THRESHOLD) {
-                            is_drag_active = true;
-                        }
-                    }
-
-                    if (is_drag_active) {
-                        if (drag_window->is_maximized) {
-                            float ratio = (float)(x - drag_window->x) / (float)drag_window->w;
-
-                            window_toggle_maximize(drag_window);
-
-                            int new_w = drag_window->w;
-                            drag_window->x = x - (int)(new_w * ratio);
-
-                            drag_window->y = y - (WIN_TITLE_HEIGHT / 2);
-
-                            drag_off_x = x - drag_window->x;
-                            drag_off_y = y - drag_window->y;
-
-                            window_invalidate_rect(root_window, 0, 0, root_window->w, root_window->h);
-                        }
-                        int new_x = x - drag_off_x;
-                        int new_y = y - drag_off_y;
-                        if (drag_window->x != new_x || drag_window->y != new_y) {
-                            window_invalidate_rect(root_window, drag_window->x, drag_window->y, drag_window->w, drag_window->h);
-                            drag_window->x = new_x;
-                            drag_window->y = new_y;
-                            window_invalidate_rect(root_window, drag_window->x, drag_window->y, drag_window->w, drag_window->h);
-
-                            window_invalidate_rect(root_window, g_mouse_last_x, g_mouse_last_y, 32, 32);
-                            window_invalidate_rect(root_window, x, y, 32, 32);
-                        }
-                    }
+                if (buttons & MOUSE_LEFT_BUTTON) {
+                    window_bring_to_front(target_win);
                 }
-            } else {
-                if (resize_window) {
-                    resize_window = NULL;
-                    resize_mode = RESIZE_NONE;
-                }
-                if (drag_window) {
-                    window_store_pos(drag_window, drag_window->x, drag_window->y);
-                    drag_window = NULL;
-                }
-                g_handled = false;
-                is_drag_active = false;
             }
+        }
 
-            g_mouse_last_x = x;
-            g_mouse_last_y = y;
+        if (g_key_event_pending) {
+            DISABLE_INTERRUPTS();
+            uint32_t key        = g_key_pressed;
+            g_key_event_pending = false;
+            ENABLE_INTERRUPTS();
+
+            // 获取当前聚焦的窗口
+            // 简单起见，这里假设你有一个 focused_window 变量，
+            // 或者直接发给 win1
+            // (为了测试，我们暂时发给鼠标最后悬停的窗口，或者遍历找)
+            // 这里我们演示：发给 "最顶层的活动窗口" (handle_table里的某一个)
+            // 但为了让你必定能收到，我们先发给 target_win (这里你需要定义
+            // target_win 指向谁)
+
+            // 【临时方案】：直接发给所有有 owner 的窗口，或者你指定的 win1 的
+            // owner 为了严谨，建议维护一个 static window_t* g_focused_window;
+            // 这里假设发给 root_window 的 owner (即 gui_server)
+            // 或者你在 create_window 时记录了 win1
+
+            // 假设我们发给 root_window (因为 gui_server 是 root
+            // 的创建者/管理者)
+            if (root_window && root_window->owner_pid != -1) {
+                message_t msg;
+                memset(&msg, 0, sizeof(message_t));
+                msg.type = MSG_GUI_KEY; // 确保在 ipc.h 定义了 (例如 101)
+                msg.u1   = key;         // 将按键码放入 u1
+
+                // 发送消息
+                sendrec(SEND, root_window->owner_pid, &msg);
+            }
         }
 
         if (g_has_dirty) {
@@ -347,7 +236,7 @@ void window_manager_handler(void) {
 }
 
 void init_window_manager() {
-    const graphics_mode_t *mode = graphics_current_mode();
+    const graphics_mode_t* mode = graphics_current_mode();
     if (!mode) return;
 
     root_window = kmalloc(sizeof(window_t));
@@ -358,25 +247,26 @@ void init_window_manager() {
         return;
     }
 
-    strncpy(root_window->title, "Desktop", WIN_TITLE_MAX - 1);
-    root_window->x = 0;
-    root_window->y = 0;
-    root_window->w = mode->width;
-    root_window->h = mode->height;
+    root_window->x     = 0;
+    root_window->y     = 0;
+    root_window->w     = mode->width;
+    root_window->h     = mode->height;
     root_window->flags = WIN_FLAG_VISIBLE;
 
-
-
+    root_window->owner_pid = -1;
 
     INIT_LIST_HEAD(&root_window->children);
     INIT_LIST_HEAD(&root_window->sibling);
 
+    window_fill(root_window, 0xFFFFFF);
     window_mark_dirty();
 
     kinfo("Window Manager initialized");
 }
 
-window_t* create_window(int x, int y, int w, int h, const char* title, uint32_t bg_color) {
+window_t* create_window(int x, int y, int w, int h, int owner) {
+    const graphics_mode_t* mode = graphics_current_mode();
+    if (!mode) return NULL;
     if (!root_window) return NULL;
 
     window_t* win = kmalloc(sizeof(window_t));
@@ -390,32 +280,24 @@ window_t* create_window(int x, int y, int w, int h, const char* title, uint32_t 
 
     win->x = x;
     win->y = y;
-    win->w = w;
-    win->h = h;
-    if (win->w < WIN_MIN_WIDTH) { win->w = WIN_MIN_WIDTH; }
-    if (win->h < WIN_MIN_HEIGHT) { win->h = WIN_MIN_HEIGHT; }
+    win->w = clamp_int(w, 0, mode->width);
+    win->h = clamp_int(h, 0, mode->height);
+
     win->flags = WIN_FLAG_VISIBLE;
-    win->bg_color = bg_color;
-    win->has_restore_bounds = false;
-    win->is_maximized = false;
-    win->is_minimized = false;
-    if (title) strncpy(win->title, title, WIN_TITLE_MAX - 1);
+
+    win->owner_pid = owner;
 
     INIT_LIST_HEAD(&win->children);
     INIT_LIST_HEAD(&win->sibling);
 
     // 初始化 Surface
-    win->surface.width = win->w;
+    win->surface.width  = win->w;
     win->surface.height = win->h;
-    win->surface.bpp = 32;
-    win->surface.pitch = win->w * 4;
-    win->surface.size = (size_t)win->w * win->h * 4;
-    win->surface.owns = true;
+    win->surface.bpp    = 32;
+    win->surface.pitch  = win->w * 4;
+    win->surface.size   = (size_t)win->w * win->h * 4;
+    win->surface.owns   = true;
     win->surface.pixels = kmalloc(win->surface.size + PAGE_SIZE);
-
-    if (win->surface.pixels) {
-        window_draw_decoration(win);
-    }
 
     // 将新窗口加入到 root 的子窗口链表尾部
     win->parent = root_window;
@@ -426,63 +308,69 @@ window_t* create_window(int x, int y, int w, int h, const char* title, uint32_t 
     return win;
 }
 
-void destroy_window(window_t* win) {
-    if (!win || win == root_window) { return; }
-
-    if (drag_window == win) {
-        drag_window = NULL;
-    }
-
-    window_invalidate_rect(root_window, win->x, win->y, win->w, win->h);
+bool destroy_window(window_t* win) {
+    if (!win || win == root_window) { return false; }
+    if (!try_destroy_window(win)) { return false; }
 
     list_del(&win->sibling);
-
-    try_destroy_window(win);
+    window_invalidate_rect(root_window, win->x, win->y, win->w, win->h);
 
     // 释放资源
     if (win->surface.pixels && win->surface.owns) {
         kfree(win->surface.pixels);
         win->surface.pixels = NULL;
     }
+
     kfree(win);
 }
 
-void window_fill(window_t* win, uint32_t color) {
-    if (!win) return;
+bool window_move_abs(window_t* win, int x, int y) {
+    if (!win || win == root_window) { return false; }
 
-    win->bg_color = color;
+    window_invalidate_rect(root_window, win->x, win->y, win->w, win->h);
+    win->x = x;
+    win->y = y;
+    window_invalidate_rect(root_window, win->x, win->y, win->w, win->h);
 
-    if (win->w > 4 && win->h > WIN_TITLE_HEIGHT + 2) {
-        graphics_rect_t rect = {
-            2,
-            WIN_TITLE_HEIGHT,
-            win->w - 4,
-            win->h - WIN_TITLE_HEIGHT - 2
-        };
-        graphics_fill_rect(&win->surface, rect, color);
-    }
+    return true;
 }
 
-// 辅助函数: 递归绘制窗口及其子窗口
-static void draw_window_recursive(graphics_surface_t* dest, window_t* win, int abs_x, int abs_y) {
-    if (!(win->flags & WIN_FLAG_VISIBLE)) return;
+bool window_fill(window_t* win, uint32_t color) {
+    if (!win) { return false; }
+    if (win->w < 0 || win->h < 0) { return false; }
+
+    graphics_rect_t rect = {
+        0,
+        0,
+        win->w,
+        win->h,
+    };
+    graphics_fill_rect(&win->surface, rect, color);
+
+    return true;
+}
+
+bool window_draw_recursive(
+    graphics_surface_t* dest, window_t* win, int abs_x, int abs_y) {
+    if (!(win->flags & WIN_FLAG_VISIBLE)) return true;
 
     // 计算当前窗口在屏幕上的绝对坐标
     int cur_x = abs_x + win->x;
     int cur_y = abs_y + win->y;
 
-    // 绘制当前窗口本身
-    // 如果是 root window，且没有分配 surface (作为背景容器)，则跳过绘制本体
+    // 绘制当前窗口
     if (win->surface.pixels) {
         graphics_blit(dest, cur_x, cur_y, &win->surface, NULL);
     }
 
     // 绘制子窗口
-    struct list_head *pos;
+    struct list_head* pos;
     list_for_each(pos, &win->children) {
-        window_t *child = container_of(pos, window_t, sibling);
-        draw_window_recursive(dest, child, cur_x, cur_y);
+        window_t* child = container_of(pos, window_t, sibling);
+        if (!window_draw_recursive(dest, child, cur_x, cur_y)) { return false; }
     }
+
+    return true;
 }
 
 void window_manager_refresh() {
@@ -497,11 +385,10 @@ void window_manager_refresh() {
     graphics_lock();
 
     graphics_set_clip_rect(dirty.x, dirty.y, dirty.w, dirty.h);
-    graphics_fill_rect(back_buffer, dirty, 0xFF336699);
-
+    graphics_fill_rect(back_buffer, dirty, COLOR_BACK);
 
     // 绘制窗口
-    draw_window_recursive(back_buffer, root_window, 0, 0);
+    window_draw_recursive(back_buffer, root_window, 0, 0);
 
     graphics_set_clip_rect(0, 0, back_buffer->width, back_buffer->height);
 
@@ -513,342 +400,42 @@ void window_manager_refresh() {
 window_t* window_from_point(int x, int y) {
     if (!root_window) return NULL;
 
-    window_t *win;
+    window_t* win;
 
     list_for_each_entry_reverse(win, &root_window->children, sibling) {
-
         // 检查窗口是否可见
         if (!(win->flags & WIN_FLAG_VISIBLE)) continue;
 
-        if (x >= win->x && x < win->x + win->w &&
-            y >= win->y && y < win->y + win->h) {
+        if (x >= win->x && x < win->x + win->w && y >= win->y
+            && y < win->y + win->h) {
             return win;
         }
     }
 
-    // 点击位置为桌面
     return root_window;
 }
 
 void window_bring_to_front(window_t* win) {
-    if (!win || !win->parent) return;
-    struct list_head *head = &win->parent->children;
+    if (!win || !win->parent) { return; }
+    if (win == root_window) { return; }
+    struct list_head* head = &win->parent->children;
 
-    if (list_is_last(&win->sibling, head)) {
-        return;
-    }
-
+    if (list_is_last(&win->sibling, head)) { return; }
     list_move_tail(&win->sibling, head);
 
     window_invalidate_rect(root_window, win->x, win->y, win->w, win->h);
 }
 
-void window_draw_decoration(window_t* win) {
-    if (!win || !win->surface.pixels) return;
-
-    int w = win->w;
-    int h = win->h;
-
-    // 绘制主背景
-    graphics_rect_t content_rect = {
-        2, WIN_TITLE_HEIGHT,
-        w - 4, h - WIN_TITLE_HEIGHT - 2
-    };
-    if (content_rect.w > 0 && content_rect.h > 0) {
-        graphics_fill_rect(&win->surface, content_rect, win->bg_color);
-    }
-
-    // 绘制标题栏
-    graphics_rect_t title_rect = {
-        2, 2,
-        w - 4, WIN_TITLE_HEIGHT - 2
-    };
-    graphics_fill_rect(&win->surface, title_rect, C_TITLE_BG);
-
-    int text_x = 6;
-    int text_y = (WIN_TITLE_HEIGHT - 16) / 2 + 1;
-
-    int btn_size = WIN_TITLE_HEIGHT - 6;
-    int buttons_start_x = w - btn_size * 3 - 12;
-    int max_text_width = buttons_start_x - text_x - 4;
-
-    // TODO: 实现可调大小文字
-    if (win->title[0] != '\0' && max_text_width > 0) {
-        char display_title[WIN_TITLE_MAX];
-        int src_idx = 0;
-        int dst_idx = 0;
-        int current_width = 0;
-        int title_full_len = strlen(win->title);
-
-        if (title_full_len * 8 <= max_text_width) {
-            strncpy(display_title, win->title, sizeof(display_title)-1);
-            display_title[sizeof(display_title)-1] = '\0';
-        } else {
-            int width_limit = max_text_width - 24;
-            int need_ellipsis = 0;
-
-            while (win->title[src_idx] != '\0' && dst_idx < sizeof(display_title) - 4) {
-                unsigned char c = (unsigned char)win->title[src_idx];
-                int char_w = 0;
-                int char_bytes = 0;
-
-                if (c < 128) {
-                    char_w = ASCII_WIDTH;
-                    char_bytes = 1;
-                } else {
-                    char_w = FONT_WIDTH;
-
-                    if ((c & 0xE0) == 0xC0) char_bytes = 2;      // 2字节字符
-                    else if ((c & 0xF0) == 0xE0) char_bytes = 3; // 3字节字符 (汉字通常在这里)
-                    else if ((c & 0xF8) == 0xF0) char_bytes = 4; // 4字节字符
-                    else char_bytes = 1; // 异常情况，当1字节处理
-                }
-
-                if (current_width + char_w > width_limit) {
-                    need_ellipsis = 1;
-                    break;
-                }
-
-                for (int k = 0; k < char_bytes; k++) {
-                    if (win->title[src_idx] == '\0') break;
-                    display_title[dst_idx++] = win->title[src_idx++];
-                }
-
-                current_width += char_w;
-            }
-
-            if (need_ellipsis || win->title[src_idx] != '\0') {
-                if (dst_idx < sizeof(display_title) - 4) {
-                    display_title[dst_idx++] = '.';
-                    display_title[dst_idx++] = '.';
-                    display_title[dst_idx++] = '.';
-                }
-            }
-            display_title[dst_idx] = '\0';
-        }
-
-        // 绘制处理后的文字
-        if (display_title[0] != '\0') {
-            graphics_draw_text(&win->surface, text_x, text_y, display_title, 0xFFFFFFFF);
-        }
-    }
-
-    // if (win->title[0] != '\0') {
-    //     graphics_draw_text(&win->surface, text_x, text_y, win->title, 0xFFFFFFFF);
-    // }
-
-    // 绘制边框
-    graphics_rect_t r_top = {0, 0, w, 2};
-    graphics_fill_rect(&win->surface, r_top, C_BORDER_LIGHT);
-    graphics_rect_t r_left = {0, 0, 2, h};
-    graphics_fill_rect(&win->surface, r_left, C_BORDER_LIGHT);
-    graphics_rect_t r_bottom = {0, h - 2, w, 2};
-    graphics_fill_rect(&win->surface, r_bottom, C_BORDER_DARK);
-    graphics_rect_t r_right = {w - 2, 0, 2, h};
-    graphics_fill_rect(&win->surface, r_right, C_BORDER_DARK);
-
-    // 绘制关闭按钮
-    int btn_y = 4;
-    graphics_rect_t close_rect = {
-        w - btn_size - 4,
-        btn_y,
-        btn_size,
-        btn_size
-    };
-    graphics_fill_rect(&win->surface, close_rect, C_CLOSE_BTN);
-
-    graphics_rect_t max_rect = {
-        w - btn_size * 2 - 8,
-        btn_y,
-        btn_size,
-        btn_size
-    };
-    graphics_fill_rect(&win->surface, max_rect, C_MAX_BTN);
-
-    graphics_rect_t min_rect = {
-        w - btn_size * 3 - 12,
-        btn_y,
-        btn_size,
-        btn_size
-    };
-    graphics_fill_rect(&win->surface, min_rect, C_MIN_BTN);
-}
-
 void window_manager_on_mouse(int x, int y, int buttons) {
-    g_cmd_x = x;
-    g_cmd_y = y;
-    g_cmd_buttons = buttons;
+    g_cmd_x               = x;
+    g_cmd_y               = y;
+    g_cmd_buttons         = buttons;
     g_mouse_event_pending = true;
 }
 
-static bool window_recreate_surface(window_t* win, int new_w, int new_h) {
-    if (!win) { return false; }
-
-    int clamped_w = max_int(new_w, WIN_MIN_WIDTH);
-    int min_h = win->is_minimized ? WIN_MINIMIZED_HEIGHT : WIN_MIN_HEIGHT;
-    int clamped_h = max_int(new_h, min_h);
-
-    size_t new_size = (size_t)clamped_w * clamped_h * 4;
-    void* new_pixels = kmalloc(new_size);
-    if (!new_pixels) {
-        kwarn("window: alloc %zu bytes for resize failed", new_size);
-        return false;
-    }
-
-    if (win->surface.pixels && win->surface.owns) {
-        kfree(win->surface.pixels);
-    }
-
-    win->surface.pixels = new_pixels;
-    win->surface.width = clamped_w;
-    win->surface.height = clamped_h;
-    win->surface.pitch = clamped_w * 4;
-    win->surface.size = new_size;
-    win->surface.owns = true;
-
-    win->w = clamped_w;
-    win->h = clamped_h;
-
-    return true;
-}
-
-static bool window_set_bounds(window_t* win, int x, int y, int w, int h) {
-    if (!win || win == root_window) { return false; }
-
-    int clamped_w = max_int(w, WIN_MIN_WIDTH);
-    int min_h = win->is_minimized ? WIN_MINIMIZED_HEIGHT : WIN_MIN_HEIGHT;
-    int clamped_h = max_int(h, min_h);
-
-    window_invalidate_rect(root_window, win->x, win->y, win->w, win->h);
-
-    if (win->w != clamped_w || win->h != clamped_h || !win->surface.pixels) {
-        if (!window_recreate_surface(win, clamped_w, clamped_h)) {
-            window_invalidate_rect(root_window, win->x, win->y, win->w, win->h);
-            return false;
-        }
-    } else {
-        win->surface.width = clamped_w;
-        win->surface.height = clamped_h;
-        win->surface.pitch = clamped_w * 4;
-        win->surface.size = (size_t)clamped_w * clamped_h * 4;
-    }
-
-    win->x = x;
-    win->y = y;
-    win->w = clamped_w;
-    win->h = clamped_h;
-
-    window_draw_decoration(win);
-    window_invalidate_rect(root_window, win->x, win->y, win->w, win->h);
-    return true;
-}
-
-static void window_store_pos(window_t* win, int x, int y) {
-    if (!win) { return; }
-    win->restore_x = x;
-    win->restore_y = y;
-    win->has_restore_pos = true;
-}
-
-
-static void window_store_bounds(window_t* win, int x, int y, int w, int h) {
-    if (!win) { return; }
-    win->restore_x = x;
-    win->restore_y = y;
-    win->restore_w = w;
-    win->restore_h = h;
-    win->has_restore_pos = true;
-    win->has_restore_bounds = true;
-}
-
-static void window_store(window_t* win) {
-    if (!win) { return; }
-    if (win->is_minimized) { return; }
-    kinfo("Storing window bounds: %d,%d %dx%d, restore_to_maximized: %d", win->x, win->y, win->w, win->h, win->is_maximized);
-    if (win->is_maximized) {
-        win->restore_to_maximized = true;
-        return;
-    }
-    window_store_bounds(win, win->x, win->y, win->w, win->h);
-}
-
-static void window_restore_bounds(window_t* win) {
-    if (!win || !win->has_restore_bounds) { return; }
-    window_set_bounds(win, win->restore_x, win->restore_y, win->restore_w, win->restore_h);
-    win->restore_to_maximized = false;
-    win->has_restore_pos = false;
-    win->has_restore_bounds = false;
-}
-
-static void window_restore(window_t* win) {
-    if (!win)
-    kinfo("Restoring window bounds: %d,%d %dx%d, restore_to_maximized: %d", win->restore_x, win->restore_y, win->restore_w, win->restore_h, win->restore_to_maximized);
-    if (win->restore_to_maximized) {
-        if (win->is_maximized) {
-
-        } else {
-            window_toggle_maximize(win);
-        }
-        win->restore_to_maximized = false;
-        return;
-    }
-    if (win->has_restore_bounds) {
-        window_restore_bounds(win);
-    } else if (win->has_restore_pos) {
-        window_set_bounds(win, win->restore_x, win->restore_y, win->w, win->h);
-        win->has_restore_pos = false;
-    }
-}
-
-void window_toggle_maximize(window_t* win) {
-    const graphics_mode_t *mode = graphics_current_mode();
-    if (!win || !mode || win == root_window) { return; }
-
-    if (win->is_maximized) {
-        window_restore_bounds(win);
-        win->is_maximized = false;
-        return;
-    }
-
-    if (win->is_minimized) {
-        if (win->restore_to_maximized) {
-            window_set_bounds(win, 0, 0, mode->width, mode->height);
-            win->is_maximized = true;
-            win->is_minimized = false;
-            return;
-        }
-        window_restore(win);
-        win->is_minimized = false;
-        if (win->is_maximized) {
-            return;
-        }
-    }
-
-    window_store(win);
-    win->is_maximized = true;
-    win->is_minimized = false;
-    window_set_bounds(win, 0, 0, mode->width, mode->height);
-}
-
-void window_toggle_minimize(window_t* win) {
-    const graphics_mode_t *mode = graphics_current_mode();
-    if (!win || !mode || win == root_window) { return; }
-
-    if (win->is_minimized) {
-        window_restore(win);
-        win->is_minimized = false;
-        return;
-    }
-
-    window_store(win);
-
-    int new_w = win->w;
-    if (new_w > mode->width) {
-        new_w = mode->width;
-    }
-    win->is_maximized = false;
-    win->is_minimized = true;
-    window_set_bounds(win, win->x, win->y, new_w, WIN_MINIMIZED_HEIGHT);
+void window_manager_on_key(uint32_t key) {
+    g_key_pressed       = key;
+    g_key_event_pending = true;
 }
 
 void window_refresh(window_t* win) {
@@ -861,69 +448,66 @@ void window_refresh(window_t* win) {
 int do_get_root_window_handle() {
     if (!root_window) { return -1; }
     int id = root_window->id;
-    if (!check_window_handle(root_window, id)) {
-        return -1;
-    }
+    if (!check_window_handle(root_window, id)) { return -1; }
     return id;
 }
 
-int do_open_window(int x, int y, int w, int h, const char* title, uint32_t bg_color) {
-    window_t* win = create_window(x, y, w, h, title, bg_color);
-    if (!win) {
-        return -1;
-    }
+int do_open_window(int x, int y, int w, int h) {
+    int       current_pid = proc2pid(p_proc_current);
+    window_t* win         = create_window(x, y, w, h, current_pid);
+
+    if (!win) { return -1; }
     int id = win->id;
     if (!check_window_handle(win, id)) {
         destroy_window(win);
         return -1;
     }
+
     return id;
 }
 
 bool do_close_window(int handle) {
-    window_t *win;
+    window_t* win;
     if (!set_window_by_handle(handle, &win)) { return false; }
     destroy_window(win);
     return true;
 }
 
 bool do_refresh_window(int handle) {
-    window_t *win;
+    window_t* win;
     if (!set_window_by_handle(handle, &win)) { return false; }
     window_refresh(win);
     return true;
 }
 
-bool do_refresh_all_window() {
+bool do_refresh_window_manager() {
     window_manager_refresh();
     return true;
 }
 
-bool do_set_window_surface_buffer(int handle, void **win_surface_buffer) {
-    window_t *win;
-    if (!set_window_by_handle(handle, &win)) {
-        return false;
-    }
+bool do_set_window_surface_buffer(int handle, void** win_surface_buffer) {
+    window_t* win;
+    if (!set_window_by_handle(handle, &win)) { return false; }
 
     // owner_pid 判断
 
-    if (win->user_surface_buffer != NULL) {
-        *win_surface_buffer = win->user_surface_buffer;
+    if (win->user_buffer != NULL) {
+        *win_surface_buffer = win->user_buffer;
         return true;
     }
 
-    pcb_t *pcb = &p_proc_current->pcb;
+    pcb_t* pcb = &p_proc_current->pcb;
 
-    uint32_t k_addr_raw = (uint32_t)win->surface.pixels;
+    uint32_t k_addr_raw   = (uint32_t)win->surface.pixels;
     uint32_t k_page_start = k_addr_raw & ~(PAGE_SIZE - 1);
-    uint32_t offset = k_addr_raw - k_page_start;
+    uint32_t offset       = k_addr_raw - k_page_start;
 
     size_t total_size = win->surface.size + offset;
-    size_t pages = (total_size + PAGE_SIZE - 1) / PAGE_SIZE;
+    size_t pages      = (total_size + PAGE_SIZE - 1) / PAGE_SIZE;
 
     lock_or(&pcb->heap_lock, sched);
 
-    void *u_ptr_base = mballoc_alloc(pcb->allocator, pages * PAGE_SIZE);
+    void* u_ptr_base = mballoc_alloc(pcb->allocator, pages * PAGE_SIZE);
     release(&pcb->heap_lock);
 
     if (u_ptr_base == NULL) return false;
@@ -946,13 +530,41 @@ bool do_set_window_surface_buffer(int handle, void **win_surface_buffer) {
 
     pg_refresh();
 
-    void *u_ptr_final = (void *)((uint32_t)u_ptr_base + offset);
+    void* u_ptr_final = (void*)((uint32_t)u_ptr_base + offset);
 
-    win->user_surface_buffer = u_ptr_final;
+    win->kernel_buffer  = (void*)k_addr_raw;
+    win->user_buffer    = u_ptr_final;
     *win_surface_buffer = u_ptr_final;
     return true;
 }
 
-bool do_update_window_surface(int handle) {
-    return do_refresh_window(handle);
+bool do_set_root_window_owner(int pid) {
+    if (!root_window) { return false; }
+    root_window->owner_pid = pid;
+    return true;
+}
+
+bool do_set_window_info(int handle, window_info_t* win_info) {
+    window_t* win;
+
+    if (!set_window_by_handle(handle, &win)) {
+        win_info->x = -1;
+        win_info->y = -1;
+        win_info->w = -1;
+        win_info->h = -1;
+    } else {
+        win_info->x = win->x;
+        win_info->y = win->y;
+        win_info->w = win->w;
+        win_info->h = win->h;
+    }
+
+    return win_info;
+}
+
+bool do_move_abs_window(int handle, int x, int y) {
+    window_t* win;
+    if (!set_window_by_handle(handle, &win)) { return false; }
+    window_move_abs(win, x, y);
+    return true;
 }

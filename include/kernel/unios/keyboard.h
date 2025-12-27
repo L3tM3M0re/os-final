@@ -156,4 +156,5 @@ typedef struct mouse_inbuf {
 } MOUSE_INPUT;
 
 void init_keyboard();
+void input_driver_thread(void);
 void keyboard_read(tty_t* p_tty);

@@ -158,8 +158,24 @@ static uint32_t sys_krnlobj_request() {
     return do_krnlobj_request(SYSCALL_ARGS2(int, void *));
 }
 
+static uint32_t sys_get_root_window_handle() {
+    return do_get_root_window_handle();
+}
+
+static uint32_t sys_set_root_window_owner() {
+    return do_set_root_window_owner(SYSCALL_ARGS1(int));
+}
+
+static uint32_t sys_set_window_info() {
+    return do_set_window_info(SYSCALL_ARGS2(int, window_info_t *));
+}
+
+static uint32_t sys_set_window_surface_buffer() {
+    return do_set_window_surface_buffer(SYSCALL_ARGS2(int, void **));
+}
+
 static uint32_t sys_open_window() {
-    return do_open_window(SYSCALL_ARGS6(int, int, int, int, const char *, uint32_t));
+    return do_open_window(SYSCALL_ARGS4(int, int, int, int));
 }
 
 static uint32_t sys_close_window() {
@@ -170,24 +186,20 @@ static uint32_t sys_refresh_window() {
     return do_refresh_window(SYSCALL_ARGS1(int));
 }
 
-static uint32_t sys_refresh_all_window() {
-    return do_refresh_all_window();
+static uint32_t sys_refresh_window_manager() {
+    return do_refresh_window_manager();
 }
 
-static uint32_t sys_get_root_window_handle() {
-    return do_get_root_window_handle();
-}
-
-static uint32_t sys_sendrec() {
-    return do_sendrec(SYSCALL_ARGS3(int, int, message_t*));
+static uint32_t sys_move_abs_window() {
+    return do_move_abs_window(SYSCALL_ARGS3(int, int, int));
 }
 
 static uint32_t sys_fill_rect() {
     return do_fill_rect(SYSCALL_ARGS5(int, int, int, int, uint32_t));
 }
 
-static uint32_t sys_set_window_surface_buffer() {
-    return do_set_window_surface_buffer(SYSCALL_ARGS2(int, void **));
+static uint32_t sys_sendrec() {
+    return do_sendrec(SYSCALL_ARGS3(int, int, message_t *));
 }
 
 syscall_t syscall_table[NR_SYSCALLS] = {
@@ -216,12 +228,15 @@ syscall_t syscall_table[NR_SYSCALLS] = {
     SYSCALL_ENTRY(killerabbit),
     SYSCALL_ENTRY(environ),
     SYSCALL_ENTRY(krnlobj_request),
+    SYSCALL_ENTRY(get_root_window_handle),
+    SYSCALL_ENTRY(set_root_window_owner),
+    SYSCALL_ENTRY(set_window_info),
+    SYSCALL_ENTRY(set_window_surface_buffer),
     SYSCALL_ENTRY(open_window),
     SYSCALL_ENTRY(close_window),
     SYSCALL_ENTRY(refresh_window),
-    SYSCALL_ENTRY(refresh_all_window),
-    SYSCALL_ENTRY(get_root_window_handle),
-    SYSCALL_ENTRY(set_window_surface_buffer),
+    SYSCALL_ENTRY(refresh_window_manager),
+    SYSCALL_ENTRY(move_abs_window),
     SYSCALL_ENTRY(fill_rect),
     SYSCALL_ENTRY(sendrec),
 };
